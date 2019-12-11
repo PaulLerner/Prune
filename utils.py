@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# encoding: utf-8
+
 from pyannote.core.utils.distance import pdist
 from scipy.spatial.distance import squareform
 import numpy as np
