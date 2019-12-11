@@ -18,10 +18,11 @@ PROTOCOL="UEM"
 SET='train'
 FIGURE_DIR='/people/lerner/Images'
 protocol_str='{}.{}.{}'.format(DATABASE,TASK,PROTOCOL)
+filter_unk=True
 
-def plot_speech_duration(stats):
-    sns.distplot(list(stats['labels'].values()),kde=False,norm_hist=True)
+def plot_speech_duration(values):
     plt.figure(figsize=(12,10))
+    sns.distplot(values,kde=False,norm_hist=True)
     plt.ylabel("density")
     plt.xlabel("speech duration")
     plt.title(f"Normed histogram of the speech duration in {protocol_str}.{SET}")
@@ -38,6 +39,10 @@ if __name__=='__main__':
         print(key,value)
 
     print("speech duration quartiles :")
-    print(np.quantile(list(stats['labels'].values()),[0.,0.25,0.5,0.75,1.0]))
+    if filter_unk:
+        values=[value for label,value in stats['labels'].items() if '#unknown#' not in label]
+    else:
+        values=list(stats['labels'].values())
+    print(np.quantile(values,[0.,0.25,0.5,0.75,1.0]))
 
-    plot_speech_duration(stats)
+    plot_speech_duration(values)
