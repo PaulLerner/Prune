@@ -43,6 +43,7 @@ if __name__=='__main__':
         values=[value for label,value in stats['labels'].items() if '#unknown#' not in label]
     else:
         values=list(stats['labels'].values())
+    print("n_speakers:",len(values))
     print(np.quantile(values,[0.,0.25,0.5,0.75,1.0]))
 
     plot_speech_duration(values)
