@@ -5,6 +5,23 @@ from pyannote.core.utils.distance import pdist
 from scipy.spatial.distance import squareform
 import numpy as np
 
+def str_to_npy(raw):
+    """
+    Preprocess manuel:
+
+    uris DER purity coverage total correct correct\\% falsealarm falsealarm\\% misseddetection misseddetection\\% confusion confusion\\%
+
+    1. enlever les espaces dans les titres
+    2. rajouter le nom de la métrique dans %
+    3. remplacer le nom de la tache par uri
+    """
+    headers = re.split(" +",raw.split("\n")[0])[1:]#discard uris
+    array=[]
+    for line in raw.split("\n")[1:]:
+        array.append(re.split(" +",line)[1:])#discard uris
+    array=np.array(array,dtype=float)
+    return array,headers
+    
 def get_embeddings_per_speaker(features, hypothesis):
     """
     Gets the average speech turn embedding for every speaker and stores it in a dict.
