@@ -38,6 +38,6 @@ if __name__=='__main__':
         print(key,value)
 
     print("speech duration quartiles :")
-    print(np.quantile(list(stats['labels'].values(),[0.,0.25,0.5,0.75,1.0])))
+    print(np.quantile(list(stats['labels'].values()),[0.,0.25,0.5,0.75,1.0]))
 
     plot_speech_duration(stats)
