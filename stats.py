@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_style("whitegrid", {'axes.grid' : False})
 import numpy as np
-np.set_printoptions(precision=2)
+np.set_printoptions(precision=2, suppress=True)
 
 from pyannote.database import get_protocol
 
@@ -20,20 +20,30 @@ SET='train'
 FIGURE_DIR='/people/lerner/Images'
 protocol_str='{}.{}.{}'.format(DATABASE,TASK,PROTOCOL)
 filter_unk=False
-crop=0.25
+crop=None
+hist=False
 
-def plot_speech_duration(values,crop=None):
+def plot_speech_duration(values,hist=True,crop=None):
     keep_n=len(values) if crop is None else int(len(values)*crop)
     values.sort()
+    values=values[-keep_n:]
     plt.figure(figsize=(12,10))
-    sns.distplot(values[-keep_n:],kde=False,norm_hist=True)
-    plt.ylabel("density")
-    plt.xlabel("speech duration")
-    plt.title(
-        f"Normed histogram of the speech duration in {protocol_str}.{SET}"
+    title=(
+        f"of the speech duration in {protocol_str}.{SET} "
         f"of the {keep_n} biggest speakers"
-        )
-    plt.savefig(os.path.join(FIGURE_DIR,f"speech_duration.{protocol_str}.{SET}.{keep_n}.png"))
+    )
+    if hist:
+        sns.distplot(values,kde=False,norm_hist=True)
+        plt.ylabel("density")
+        plt.xlabel("speech duration")
+        plt.title("Normed histogram "+title)
+    else:
+        plt.title("Plot "+title)
+        plt.ylabel("speech duration")
+        plt.xlabel("speaker #")
+        plt.plot(values,".")
+    fig_type="hist" if hist else "plot"
+    plt.savefig(os.path.join(FIGURE_DIR,f"speech_duration.{protocol_str}.{SET}.{fig_type}.{keep_n}.png"))
 
 if __name__=='__main__':
 
@@ -57,4 +67,4 @@ if __name__=='__main__':
     print("deciles:")
     print(np.quantile(values,np.arange(0,1.1,0.1)))
 
-    plot_speech_duration(values,crop)
+    plot_speech_duration(values,hist,crop)
