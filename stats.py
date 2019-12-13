@@ -19,15 +19,21 @@ PROTOCOL="UEM"
 SET='train'
 FIGURE_DIR='/people/lerner/Images'
 protocol_str='{}.{}.{}'.format(DATABASE,TASK,PROTOCOL)
-filter_unk=True
+filter_unk=False
+crop=0.25
 
-def plot_speech_duration(values):
+def plot_speech_duration(values,crop=None):
+    keep_n=len(values) if crop is None else int(len(values)*crop)
+    values.sort()
     plt.figure(figsize=(12,10))
-    sns.distplot(values,kde=False,norm_hist=True)
+    sns.distplot(values[-keep_n:],kde=False,norm_hist=True)
     plt.ylabel("density")
     plt.xlabel("speech duration")
-    plt.title(f"Normed histogram of the speech duration in {protocol_str}.{SET}")
-    plt.savefig(os.path.join(FIGURE_DIR,f"speech_duration.{protocol_str}.{SET}.png"))
+    plt.title(
+        f"Normed histogram of the speech duration in {protocol_str}.{SET}"
+        f"of the {keep_n} biggest speakers"
+        )
+    plt.savefig(os.path.join(FIGURE_DIR,f"speech_duration.{protocol_str}.{SET}.{keep_n}.png"))
 
 if __name__=='__main__':
 
@@ -51,4 +57,4 @@ if __name__=='__main__':
     print("deciles:")
     print(np.quantile(values,np.arange(0,1.1,0.1)))
 
-    plot_speech_duration(values)
+    plot_speech_duration(values,crop)
