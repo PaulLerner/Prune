@@ -4,7 +4,7 @@
 Gets stats and plots stuff given a protocol
 
 Usage:
-  stats.py <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist]
+  stats.py <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
   stats.py -h | --help
 
 Common options:
@@ -57,12 +57,13 @@ if __name__=='__main__':
     filter_unk=args['--filter_unk']
     crop=float(args['--crop']) if args['--crop'] else None
     hist=args['--hist']
+    verbose=args['--verbose']
 
     protocol = get_protocol(protocol_name)
     print(f"gettings stats from {protocol_name}.{set}...")
     stats=protocol.stats(set)
     for key,value in stats.items():
-        if key=='labels':
+        if key=='labels' and not verbose:
             break
         print(key,value)
 
