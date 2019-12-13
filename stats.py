@@ -23,7 +23,7 @@ from pyannote.database import get_protocol
 
 
 
-def plot_speech_duration(values,hist=True,crop=None):
+def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
     keep_n=len(values) if crop is None else int(len(values)*crop)
     values.sort()
     values=values[-keep_n:]
@@ -57,7 +57,7 @@ if __name__=='__main__':
     filter_unk=args['--filter_unk']
     crop=float(args['--crop']) if args['--crop'] else None
     hist=args['--hist']
-    
+
     protocol = get_protocol(protocol_name)
     print(f"gettings stats from {protocol_name}.{set}...")
     stats=protocol.stats(set)
@@ -78,5 +78,4 @@ if __name__=='__main__':
     print("deciles:")
     print(np.quantile(values,np.arange(0,1.1,0.1)))
 
-    plot_speech_duration(values,hist,crop,
-        protocol_name, set)
+    plot_speech_duration(values,protocol_name, set, hist,crop)
