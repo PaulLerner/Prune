@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_style("whitegrid", {'axes.grid' : False})
 import numpy as np
+np.set_printoptions(precision=2)
 
 from pyannote.database import get_protocol
 
@@ -44,6 +45,10 @@ if __name__=='__main__':
     else:
         values=list(stats['labels'].values())
     print("n_speakers:",len(values))
+    print("quartiles:")
     print(np.quantile(values,[0.,0.25,0.5,0.75,1.0]))
+
+    print("deciles:")
+    print(np.quantile(values,np.arange(0,1.1,0.1)))
 
     plot_speech_duration(values)
