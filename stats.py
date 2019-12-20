@@ -21,7 +21,7 @@ np.set_printoptions(precision=2, suppress=True)
 
 from pyannote.database import get_protocol
 
-
+FIGURE_DIR='/people/lerner/Images'
 
 def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
     keep_n=len(values) if crop is None else int(len(values)*crop)
@@ -55,7 +55,6 @@ def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
     print(f"succesfully saved {save_path}")
 
 def main(args):
-    FIGURE_DIR='/people/lerner/Images'
     protocol_name = args['<database.task.protocol>']
     set=args['--set'] if args['--set'] else "train"
     filter_unk=args['--filter_unk']
