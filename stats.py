@@ -27,6 +27,10 @@ def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
     keep_n=len(values) if crop is None else int(len(values)*crop)
     values.sort()
     values=values[-keep_n:]
+    mean=np.mean(values)
+    std=np.std(values)
+    print("mean:",mean)
+    print("std:",std)
     plt.figure(figsize=(12,10))
     title=(
         f"of the speech duration in {protocol_name}.{set} "
@@ -42,16 +46,16 @@ def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
         plt.ylabel("speech duration (s)")
         plt.xlabel("speaker #")
         plt.plot(values,".")
+        plt.errorbar(np.arange(len(values)),[mean for _ in values],[std for _ in values])
+        plt.legend()
     fig_type="hist" if hist else "plot"
     save_path=os.path.join(FIGURE_DIR,f"speech_duration.{protocol_name}.{set}.{fig_type}.{keep_n}.png")
+    plt.show()
     plt.savefig(save_path)
     print(f"succesfully saved {save_path}")
 
-if __name__=='__main__':
+def main(args):
     FIGURE_DIR='/people/lerner/Images'
-
-    args = docopt(__doc__)
-
     protocol_name = args['<database.task.protocol>']
     set=args['--set'] if args['--set'] else "train"
     filter_unk=args['--filter_unk']
@@ -80,3 +84,7 @@ if __name__=='__main__':
     print(np.quantile(values,np.arange(0,1.1,0.1)))
 
     plot_speech_duration(values,protocol_name, set, hist,crop)
+
+if __name__=='__main__':
+    args = docopt(__doc__)
+    main(args)
