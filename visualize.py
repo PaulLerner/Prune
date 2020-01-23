@@ -19,7 +19,7 @@ from pathlib import Path
 import json
 from docopt import docopt
 from pyannote.core import Annotation
-from pyannote.database.util import load_rttm
+from pyannote.database.util import load_rttm, load_id
 from convert import annotation_to_GeckoJSON
 from pyannote.database import get_protocol
 from pyannote.metrics.diarization import DiarizationErrorRate
@@ -28,7 +28,7 @@ DATA_PATH=Path('/vol', 'work', 'lerner', 'pyannote-db-plumcot', 'Plumcot', 'data
 
 def gecko(args):
     hypotheses_path=args['<hypotheses_path>']
-    hypotheses=load_rttm(hypotheses_path)
+    hypotheses, distances=load_id(hypotheses_path)
     uri=args['<uri>']
     serie_uri=uri.split(".")[0]
     fa=Path(DATA_PATH,serie_uri,'forced-alignment')
@@ -41,7 +41,7 @@ def gecko(args):
             annotation_json=json.load(file)
         for monologue in annotation_json["monologues"]:
             colors[monologue["speaker"]["id"]]=monologue["speaker"].get("color")
-    hypothesis=hypotheses[uri]
+    hypothesis, distances = hypotheses[uri], distances[uri]
     protocol=args['--protocol']
     if protocol:
         print(f"mapping {uri} with {protocol}")
@@ -54,7 +54,7 @@ def gecko(args):
         optimal_mapping=diarizationErrorRate.optimal_mapping(reference['annotation'], hypothesis,reference['annotated'])
         hypothesis=hypothesis.rename_labels(mapping=optimal_mapping)
 
-    gecko_json=annotation_to_GeckoJSON(hypothesis,colors)
+    gecko_json=annotation_to_GeckoJSON(hypothesis, distances, colors)
     dir_path=os.path.dirname(hypotheses_path)
     json_path=os.path.join(dir_path,f'{uri}.json')
     with open(json_path,'w') as file:
