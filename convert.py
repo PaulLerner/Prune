@@ -3,11 +3,14 @@
 
 import json
 
-def annotation_to_GeckoJSON(annotation):
+def annotation_to_GeckoJSON(annotation,colors={}):
     """
     Parameters:
     -----------
-    annotation: proper pyannote annotation for speaker identification/diarization as defined in https://github.com/pyannote/pyannote-core
+    annotation: `pyannote.core.Annotation`
+        proper pyannote annotation for speaker identification/diarization
+    colors: `dict`
+        speaker id : consistent color
 
     Returns:
     --------
@@ -20,12 +23,14 @@ def annotation_to_GeckoJSON(annotation):
       "monologues" : [  ]
     }""")
     for segment, track, label in annotation.itertracks(yield_label=True):
+        color=colors.get(label) if colors else None
         gecko_json["monologues"].append(
             {
                 "speaker":{
                     "id":label,
                     "start" : segment.start,
-                    "end" : segment.end
+                    "end" : segment.end,
+                    "color": color
                 },
                 "terms":[
                     {
