@@ -2,8 +2,9 @@
 # encoding: utf-8
 
 import json
+DISTANCE_THRESHOLD=0.5
 
-def annotation_to_GeckoJSON(annotation,colors={}):
+def annotation_to_GeckoJSON(annotation, distances, colors={}):
     """
     Parameters:
     -----------
@@ -23,7 +24,15 @@ def annotation_to_GeckoJSON(annotation,colors={}):
       "monologues" : [  ]
     }""")
     for segment, track, label in annotation.itertracks(yield_label=True):
+        distance=distances.get(segment)
+        distance=distance.get(label) if distance else None
+        distance= distance if distance !="<NA>" else None
+        if distance:
+            if distance > DISTANCE_THRESHOLD:
+                label=f"?{label}"
+
         color=colors.get(label) if colors else None
+        
         gecko_json["monologues"].append(
             {
                 "speaker":{
