@@ -50,7 +50,7 @@ def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
         plt.legend()
     fig_type="hist" if hist else "plot"
     save_path=os.path.join(FIGURE_DIR,f"speech_duration.{protocol_name}.{set}.{fig_type}.{keep_n}.png")
-    plt.show()
+    #plt.show()
     plt.savefig(save_path)
     print(f"succesfully saved {save_path}")
 
@@ -63,6 +63,13 @@ def main(args):
     verbose=args['--verbose']
 
     protocol = get_protocol(protocol_name)
+    # print("uri \t duration (s)")
+    # for item in protocol.train():
+    #     uri = item['uri']
+    #     annotated=item['annotated']
+    #     annotation=item['annotation'].crop(annotated)
+    #     speech_duration = annotation.get_timeline().duration()
+    #     print(f"{uri} \t {speech_duration}")
     print(f"gettings stats from {protocol_name}.{set}...")
     stats=protocol.stats(set)
     for key,value in stats.items():
