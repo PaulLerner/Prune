@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 """Usage:
-  visualize.py gecko <hypotheses_path> <uri> [--protocol=<database.task.protocol>]
+  visualize.py gecko <hypotheses_path> <uri> <database.task.protocol>
   visualize.py distances <hypotheses_path> <uri> <database.task.protocol>
   visualize.py stats <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
   visualize.py -h | --help
@@ -9,7 +9,8 @@
 gecko options:
     <hypotheses_path>                   Path to the hypotheses (rttm file) you want to convert to gecko-json
     <uri>                               Uri of the hypothesis you want to convert to gecko-json
-    --protocol=<database.task.protocol> Experimental protocol (e.g. "Etape.SpeakerDiarization.TV")
+    <database.task.protocol>            Experimental protocol (e.g. "Etape.SpeakerDiarization.TV")
+    --map                               Map hypothesis label with reference
 
 stats options:
   <database.task.protocol>              Experimental protocol (e.g. "Etape.SpeakerDiarization.TV")
@@ -27,13 +28,15 @@ import re
 import numpy as np
 
 from pyannote.core import Annotation
+from pyannote.audio.features import Precomputed
 from pyannote.database.util import load_rttm, load_id
-from convert import annotation_to_GeckoJSON
 from pyannote.database import get_protocol,get_annotated
 from pyannote.metrics.diarization import DiarizationErrorRate
 
+from prune.convert import *
+
 DATA_PATH=Path('/vol', 'work', 'lerner', 'pyannote-db-plumcot', 'Plumcot', 'data')
-from convert import DISTANCE_THRESHOLD
+embeddings="/vol/work/lerner/baseline/emb/train/Plumcot-Friends.SpeakerDiarization.UEM.train/validate/Friends.SpeakerDiarization.FA-UEM.development/apply/1345"
 
 def distances(args):
     hypotheses_path=args['<hypotheses_path>']
@@ -106,20 +109,23 @@ def gecko(args):
         for monologue in annotation_json["monologues"]:
             colors[monologue["speaker"]["id"]]=monologue["speaker"].get("color")
     hypothesis, distances = hypotheses[uri], distances[uri]
-    protocol=args['--protocol']
-    if protocol:
-        print(f"mapping {uri} with {protocol}")
-        protocol = get_protocol(protocol)
-        #optimal mapping
-        for reference in getattr(protocol, 'test')():
-            if reference['uri']==uri:
-                break
-        diarizationErrorRate=DiarizationErrorRate()
-        annotated=get_annotated(reference)
-        optimal_mapping=diarizationErrorRate.optimal_mapping(reference['annotation'], hypothesis,annotated)
-        hypothesis=hypothesis.rename_labels(mapping=optimal_mapping)
+    precomputed = Precomputed(embeddings)
+    protocol=args['<database.task.protocol>']
+    protocol = get_protocol(protocol)
+    for reference in getattr(protocol, 'test')():
+        if reference['uri']==uri:
+            features = precomputed(reference)
+            break
+        if args['--map']:
+            print(f"mapping {uri} with {protocol}")
+            diarizationErrorRate=DiarizationErrorRate()
+            annotated=get_annotated(reference)
+            optimal_mapping=diarizationErrorRate.optimal_mapping(reference['annotation'], hypothesis,annotated)
+            hypothesis=hypothesis.rename_labels(mapping=optimal_mapping)
 
-    gecko_json=annotation_to_GeckoJSON(hypothesis, distances, colors)
+    hypothesis=update_labels(hypothesis, distances)#tag unsure clusters
+    distances_per_speaker=get_distances_per_speaker(features, hypothesis)
+    gecko_json=annotation_to_GeckoJSON(hypothesis, distances_per_speaker, colors)
     dir_path=os.path.dirname(hypotheses_path)
     json_path=os.path.join(dir_path,f'{uri}.json')
     with open(json_path,'w') as file:
