@@ -57,6 +57,19 @@ def get_distances_per_speaker(features, hypothesis):
         distances=squareform(pdist(embeddings_per_speaker[speaker], metric='angular'))
         distances_per_speaker[speaker]=np.mean(distances,axis=0)
     return distances_per_speaker
+
+def update_labels(annotation, distances):
+    """Tag labels with "?" depending on their distance to the reference
+    """
+    for segment, track, label in annotation.itertracks(yield_label=True):
+        distance=distances.get(segment)
+        distance=distance.get(label) if distance else None
+        distance= distance if distance !="<NA>" else None
+        if distance:
+            if distance > DISTANCE_THRESHOLD:
+                annotation[segment,track]=f"?{label}"
+    return annotation
+
 def annotation_to_GeckoJSON(annotation, distances, colors={}):
     """
     Parameters:
