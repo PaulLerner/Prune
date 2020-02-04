@@ -21,10 +21,11 @@ def get_embeddings_per_speaker(features, hypothesis):
 
     Returns
     -------
-    embeddings_per_speaker : `dict` : each key is a speaker and each value is a list of embeddings,
-        each embedding being the average of embeddings in the speech turn
+    embeddings_per_speaker : `dict`
+        each key is a speaker which is itself a dict where keys are segments
+        each segment being the average of embeddings in the segment
     """
-    embeddings_per_speaker={speaker:[] for speaker in hypothesis.labels()}
+    embeddings_per_speaker={speaker:{} for speaker in hypothesis.labels()}
     for segment, track, label in hypothesis.itertracks(yield_label=True):
         # be more and more permissive until we have
         # at least one embedding for current speech turn
@@ -32,9 +33,12 @@ def get_embeddings_per_speaker(features, hypothesis):
             x = features.crop(segment, mode=mode)
             if len(x) > 0:
                 break
+        # skip speech turns so small we don't have any embedding for it
+        if len(x) < 1:
+            continue
         # average speech turn embedding
         avg=np.mean(x, axis=0)
-        embeddings_per_speaker[label].append(avg)
+        embeddings_per_speaker[label][segment]=avg
     return embeddings_per_speaker
 
 def get_distances_per_speaker(features, hypothesis):
@@ -51,11 +55,14 @@ def get_distances_per_speaker(features, hypothesis):
     distances_per_speaker : `dict` : each key is a speaker and each value is a list of distances,
         each distance corresponds to the distance between a speech turn and a fictitious cluster center.
     """
-    distances_per_speaker={}
     embeddings_per_speaker=get_embeddings_per_speaker(features, hypothesis)
-    for speaker, embeddings in embeddings_per_speaker.items():
-        distances=squareform(pdist(embeddings_per_speaker[speaker], metric='angular'))
-        distances_per_speaker[speaker]=np.mean(distances,axis=0)
+    distances_per_speaker=embeddings_per_speaker.copy()
+    for speaker, segments in embeddings_per_speaker.items():
+        flat_embeddings=list(segments.values())
+        distances=squareform(pdist(flat_embeddings, metric='angular'))
+        distances=np.mean(distances,axis=0)
+        for i, segment in enumerate(distances_per_speaker[speaker]):
+            distances_per_speaker[speaker][segment]=distances[i]
     return distances_per_speaker
 
 def update_labels(annotation, distances):
@@ -86,32 +93,25 @@ def annotation_to_GeckoJSON(annotation, distances, colors={}):
     """
 
     gecko_json=json.loads("""{
-      "schemaVersion" : "2.0",
+      "schemaVersion" : "3.1",
       "monologues" : [  ]
     }""")
     for segment, track, label in annotation.itertracks(yield_label=True):
-        distance=distances.get(segment)
-        distance=distance.get(label) if distance else None
-        distance= distance if distance !="<NA>" else None
-        if distance:
-            if distance > DISTANCE_THRESHOLD:
-                label=f"?{label}"
-
+        distance=distances.get(label)
+        distance=distance.get(segment) if distance else None
         color=colors.get(label) if colors else None
-        
         gecko_json["monologues"].append(
             {
                 "speaker":{
                     "id":label,
+                    "color": color,
+                    "distance":distance,
+                    "non_id":[],
+                    "annotators":0,
                     "start" : segment.start,
-                    "end" : segment.end,
-                    "color": color
+                    "end" : segment.end
                 },
-                "terms":[
-                    {
-                        "start" : segment.start,
-                        "end" : segment.end
-                    }
-                ]
+                "start" : segment.start,
+                "end" : segment.end
         })
     return gecko_json
