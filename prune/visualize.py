@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 """Usage:
-  visualize.py gecko <hypotheses_path> <uri> <database.task.protocol>
+  visualize.py gecko <hypotheses_path> <uri> <database.task.protocol> [--map]
   visualize.py distances <hypotheses_path> <uri> <database.task.protocol>
   visualize.py stats <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
   visualize.py -h | --help
@@ -21,6 +21,7 @@ from pathlib import Path
 import json
 from docopt import docopt
 import matplotlib.pyplot as plt
+from matplotlib.cm import get_cmap
 import seaborn as sns
 sns.set_style("whitegrid", {'axes.grid' : False})
 
@@ -32,6 +33,8 @@ from pyannote.audio.features import Precomputed
 from pyannote.database.util import load_rttm, load_id
 from pyannote.database import get_protocol,get_annotated
 from pyannote.metrics.diarization import DiarizationErrorRate
+import pyannote.database
+from Plumcot import Plumcot
 
 from prune.convert import *
 
@@ -93,6 +96,14 @@ def distances(args):
     plt.xlabel("angular distance")
     plt.show()
 
+def color_gen():
+    cm = get_cmap('Set1')
+    while True:
+        x=np.random.rand()
+        r,g,b,alpha=cm(x,bytes=True)
+        color=f'#{r:02x}{g:02x}{b:02x}'
+        yield color
+
 def gecko(args):
     hypotheses_path=args['<hypotheses_path>']
     hypotheses, distances=load_id(hypotheses_path)
@@ -107,7 +118,16 @@ def gecko(args):
         with open(annotation_json,'r') as file:
             annotation_json=json.load(file)
         for monologue in annotation_json["monologues"]:
-            colors[monologue["speaker"]["id"]]=monologue["speaker"].get("color")
+            color=monologue["speaker"].get("color",next(color_gen()))
+            colors[monologue["speaker"]["id"]]=color
+    else: #no annotation -> falls back to character list
+        db=Plumcot()
+        characters=db.get_characters(serie_uri)[uri]
+        colors={character:next(color_gen()) for character in characters}
+    colors_path=Path(DATA_PATH,serie_uri,'colors')
+    colors_path.mkdir(exist_ok=True)
+    with open(Path(colors_path,f'{uri}.json'),'w') as file:
+        json.dump(colors,file)
     hypothesis, distances = hypotheses[uri], distances[uri]
     precomputed = Precomputed(embeddings)
     protocol=args['<database.task.protocol>']
