@@ -121,7 +121,7 @@ def gecko_JSON_to_Annotation(gecko_JSON, uri=None, modality='speaker'):
                 must_link[segment,speaker_id] = speaker_id
 
         non_ids = monologue["speaker"]["non_id"]
-        non_ids=set(speaker_ids)-NA_VALUES
+        non_ids=set(non_ids)-NA_VALUES
         for speaker_id in non_ids:
             cannot_link[segment,speaker_id] = speaker_id
 
