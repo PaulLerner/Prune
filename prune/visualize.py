@@ -2,6 +2,7 @@
 # encoding: utf-8
 """Usage:
   visualize.py gecko <hypotheses_path> <uri> <database.task.protocol> [--map]
+  visualize.py update_distances <json_path> <uri> <database.task.protocol>
   visualize.py distances <hypotheses_path> <uri> <database.task.protocol>
   visualize.py stats <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
   visualize.py -h | --help
@@ -19,6 +20,8 @@ stats options:
 import os
 from pathlib import Path
 import json
+from datetime import datetime
+
 from docopt import docopt
 import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
@@ -104,11 +107,51 @@ def color_gen():
         color=f'#{r:02x}{g:02x}{b:02x}'
         yield color
 
-def gecko(args):
-    hypotheses_path=args['<hypotheses_path>']
-    hypotheses, distances=load_id(hypotheses_path)
+def update_distances(args):
+    """Loads user annotation from json path, converts it to pyannote `Annotation`
+    using regions timings.
+
+    From the annotation uri and precomputed embeddings, it computes the
+    in-cluster distances between every speech turns
+
+    Dumps the updated (with correct distances) JSON file to a timestamped file.
+    """
+    json_path=Path(args['<json_path>'])
     uri=args['<uri>']
+    with open(json_path,'r') as file:
+        gecko_json=json.load(file)
+    hypothesis,_,_,_=gecko_JSON_to_Annotation(gecko_json, uri, 'speaker')
+
+    colors=get_colors(uri)
+
+    precomputed = Precomputed(embeddings)
+    protocol=args['<database.task.protocol>']
+    protocol = get_protocol(protocol)
+    for reference in getattr(protocol, 'test')():
+        if reference['uri']==uri:
+            features = precomputed(reference)
+            break
+    distances_per_speaker=get_distances_per_speaker(features, hypothesis)
+    gecko_json=annotation_to_GeckoJSON(hypothesis, distances_per_speaker, colors)
+    time=datetime.today().strftime('%Y%m%d-%H%M%S')
+    name=f"{json_path.stem}.{time}.json"
+    updated_path=Path(json_path.parent,name)
+    with open(updated_path,'w') as file:
+        json.dump(gecko_json,file)
+    print(f"succefully dumped {updated_path}")
+
+def get_colors(uri):
     serie_uri=uri.split(".")[0]
+    colors_dir=Path(DATA_PATH,serie_uri,'colors')
+    colors_dir.mkdir(exist_ok=True)
+    colors_path=Path(colors_dir,f'{uri}.json')
+
+    if colors_path.exists():
+        with open(colors_path,"r") as file:
+            colors=json.load(file)
+        return colors
+
+    #else: extract from gecko_json or generate with matplotlib
     fa=Path(DATA_PATH,serie_uri,'forced-alignment')
     #get manual annotation if exists else falls back to raw forced-alignment
     annotation_json=Path(fa,f"{uri}.manual.json") if Path(fa,f"{uri}.manual.json").exists() else Path(fa,f"{uri}.json")
@@ -124,10 +167,15 @@ def gecko(args):
         db=Plumcot()
         characters=db.get_characters(serie_uri)[uri]
         colors={character:next(color_gen()) for character in characters}
-    colors_path=Path(DATA_PATH,serie_uri,'colors')
-    colors_path.mkdir(exist_ok=True)
-    with open(Path(colors_path,f'{uri}.json'),'w') as file:
+    with open(colors_path,'w') as file:
         json.dump(colors,file)
+    return colors
+
+def gecko(args):
+    hypotheses_path=args['<hypotheses_path>']
+    hypotheses, distances=load_id(hypotheses_path)
+    uri=args['<uri>']
+    colors=get_colors(uri)
     hypothesis, distances = hypotheses[uri], distances[uri]
     precomputed = Precomputed(embeddings)
     protocol=args['<database.task.protocol>']
@@ -156,6 +204,8 @@ if __name__ == '__main__':
     args = docopt(__doc__)
     if args['gecko']:
         gecko(args)
+    if args['update_distances']:
+        update_distances(args)
     if args['distances']:
         distances(args)
     if args['stats']:
