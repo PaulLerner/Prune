@@ -128,13 +128,16 @@ def gecko_JSON_to_Annotation(gecko_JSON, uri=None, modality='speaker'):
     annotated=Timeline([Segment(0.0,monologue["end"])],uri)
     return annotation, must_link, cannot_link, annotated
 
-def annotation_to_GeckoJSON(annotation, distances, colors={}):
+def annotation_to_GeckoJSON(annotation, distances=None, colors={}):
     """
     Parameters:
     -----------
     annotation: `pyannote.core.Annotation`
         proper pyannote annotation for speaker identification/diarization
-    colors: `dict`
+    distances: `dict`, optional
+        in-cluster distances between speech features
+        see `get_distances_per_speaker`
+    colors: `dict`, optional
         speaker id : consistent color
 
     Returns:
@@ -148,7 +151,7 @@ def annotation_to_GeckoJSON(annotation, distances, colors={}):
       "monologues" : [  ]
     }""")
     for segment, track, label in annotation.itertracks(yield_label=True):
-        distance=distances.get(label)
+        distance=distances.get(label) if distances else None
         distance=distance.get(segment) if distance else None
         color=colors.get(label) if colors else None
         gecko_json["monologues"].append(
@@ -158,9 +161,7 @@ def annotation_to_GeckoJSON(annotation, distances, colors={}):
                     "color": color,
                     "distance":distance,
                     "non_id":[],
-                    "annotators":0,
-                    "start" : segment.start,
-                    "end" : segment.end
+                    "annotators":0
                 },
                 "start" : segment.start,
                 "end" : segment.end
