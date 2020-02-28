@@ -40,6 +40,7 @@ import pyannote.database
 from Plumcot import Plumcot
 
 from prune.convert import *
+from prune.features import *
 
 DATA_PATH=Path('/vol', 'work', 'lerner', 'pyannote-db-plumcot', 'Plumcot', 'data')
 embeddings="/vol/work/lerner/baseline/emb/train/Plumcot-Friends.SpeakerDiarization.UEM.train/validate/Friends.SpeakerDiarization.FA-UEM.development/apply/1345"
