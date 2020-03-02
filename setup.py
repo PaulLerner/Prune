@@ -9,7 +9,8 @@ setup(
     packages=find_packages(),
     scripts=[
         "prune/stats.py",
-        "prune/visualize.py"
+        "prune/visualize.py",
+        "prune/convert.py"
     ],
 
     long_description=long_description,
