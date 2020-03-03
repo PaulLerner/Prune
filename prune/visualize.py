@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 """Usage:
-  visualize.py gecko <hypotheses_path> <uri> [--map --database.task.protocol=<database.task.protocol> --embeddings=<embeddings>]
+  visualize.py gecko (<hypotheses_path>|<database.task.protocol>) <uri> [--map --database.task.protocol=<database.task.protocol> --embeddings=<embeddings>]
   visualize.py update_distances <json_path> <uri> <database.task.protocol>
   visualize.py distances <hypotheses_path> <uri> <database.task.protocol>
   visualize.py stats <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
@@ -9,6 +9,7 @@
 
 gecko options:
     <hypotheses_path>                   Path to the hypotheses (rttm file) you want to convert to gecko-json
+    <database.task.protocol>            Experimental protocol (e.g. "Etape.SpeakerDiarization.TV")
     <uri>                               Uri of the hypothesis you want to convert to gecko-json
     --embeddings=<embeddings>           Path to precomputed embeddings
     --database.task.protocol=<d.t.p>    Experimental protocol (e.g. "Etape.SpeakerDiarization.TV")
@@ -162,6 +163,8 @@ def get_colors(uri):
         with open(annotation_json,'r') as file:
             annotation_json=json.load(file)
         for monologue in annotation_json["monologues"]:
+            if not isinstance(monologue, dict):
+                continue
             color=monologue["speaker"].get("color",next(color_gen()))
             colors[monologue["speaker"]["id"]]=color
     else: #no annotation -> falls back to character list
@@ -172,34 +175,47 @@ def get_colors(uri):
         json.dump(colors,file)
     return colors
 
+def get_file(protocol, uri, subsets=['test','development','train'], embeddings=None):
+    for subset in subsets:
+        for reference in getattr(protocol, subset)():
+            if reference['uri']==uri:
+                if embeddings:
+                    precomputed = Precomputed(embeddings)
+                    features = precomputed(reference)
+                    return reference, features
+                return reference
+    raise ValueError(f'{uri} is not in {protocol}')
+
 def gecko(args):
     hypotheses_path=args['<hypotheses_path>']
-    hypotheses, distances=load_id(hypotheses_path)
     uri=args['<uri>']
     colors=get_colors(uri)
-    hypothesis, distances = hypotheses[uri], distances[uri]
+    if Path(hypotheses_path).exists():
+        hypotheses, distances=load_id(hypotheses_path)
+        hypothesis, distances = hypotheses[uri], distances[uri]
+    else: #protocol
+        distances = {}
+        protocol = get_protocol(args['<hypotheses_path>'])
+        hypothesis = get_file(protocol, uri)['annotation']
+    hypotheses_path = Path(hypotheses_path)
     protocol=args['--database.task.protocol']
     features=None
     if protocol:
         protocol = get_protocol(protocol)
         embeddings=args['--embeddings']
-        for reference in getattr(protocol, 'test')():
-            if reference['uri']==uri and embeddings:
-                precomputed = Precomputed(embeddings)
-                features = precomputed(reference)
-                break
-            if args['--map']:
-                print(f"mapping {uri} with {protocol}")
-                diarizationErrorRate=DiarizationErrorRate()
-                annotated=get_annotated(reference)
-                optimal_mapping=diarizationErrorRate.optimal_mapping(reference['annotation'], hypothesis,annotated)
-                hypothesis=hypothesis.rename_labels(mapping=optimal_mapping)
+        reference, features = get_file(protocol, uri, embeddings=embeddings)
+        if args['--map']:
+            print(f"mapping {uri} with {protocol}")
+            diarizationErrorRate=DiarizationErrorRate()
+            annotated=get_annotated(reference)
+            optimal_mapping=diarizationErrorRate.optimal_mapping(reference['annotation'], hypothesis,annotated)
+            hypothesis=hypothesis.rename_labels(mapping=optimal_mapping)
 
     hypothesis=update_labels(hypothesis, distances)#tag unsure clusters
 
     distances_per_speaker=get_distances_per_speaker(features, hypothesis) if features else {}
     gecko_json=annotation_to_GeckoJSON(hypothesis, distances_per_speaker, colors)
-    dir_path=os.path.dirname(hypotheses_path)
+    dir_path=hypotheses_path if hypotheses_path.exists() else DATA_PATH
     json_path=os.path.join(dir_path,f'{uri}.json')
     with open(json_path,'w') as file:
         json.dump(gecko_json,file)
