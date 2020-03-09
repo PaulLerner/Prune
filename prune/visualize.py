@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 """Usage:
-  visualize.py gecko (<hypotheses_path>|<database.task.protocol>) <uri> [--map --database.task.protocol=<database.task.protocol> --embeddings=<embeddings>]
+  visualize.py gecko (<hypotheses_path>|<database.task.protocol>) <uri> [--map  --tag_na --database.task.protocol=<database.task.protocol> --embeddings=<embeddings>]
   visualize.py update_distances <json_path> <uri> <database.task.protocol>
   visualize.py distances <hypotheses_path> <uri> <database.task.protocol>
   visualize.py stats <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
@@ -14,6 +14,8 @@ gecko options:
     --embeddings=<embeddings>           Path to precomputed embeddings
     --database.task.protocol=<d.t.p>    Experimental protocol (e.g. "Etape.SpeakerDiarization.TV")
     --map                               Map hypothesis label with reference
+    --tag_na                            Tag not annotated parts of the hypothesis as "#not_annotated#"
+                                        Only available if annotated is provided
 
 stats options:
   <database.task.protocol>              Experimental protocol (e.g. "Etape.SpeakerDiarization.TV")
@@ -186,6 +188,11 @@ def get_file(protocol, uri, subsets=['test','development','train'], embeddings=N
                 return reference
     raise ValueError(f'{uri} is not in {protocol}')
 
+def na():
+    while True:
+        yield "#not_annotated#"
+
+
 def gecko(args):
     hypotheses_path=args['<hypotheses_path>']
     uri=args['<uri>']
@@ -196,7 +203,9 @@ def gecko(args):
     else: #protocol
         distances = {}
         protocol = get_protocol(args['<hypotheses_path>'])
-        hypothesis = get_file(protocol, uri)['annotation']
+        reference = get_file(protocol, uri)
+        hypothesis = reference['annotation']
+        annotated=get_annotated(reference)
     hypotheses_path = Path(hypotheses_path)
     protocol=args['--database.task.protocol']
     features=None
@@ -214,8 +223,19 @@ def gecko(args):
     hypothesis=update_labels(hypothesis, distances)#tag unsure clusters
 
     distances_per_speaker=get_distances_per_speaker(features, hypothesis) if features else {}
+
+    if args['--tag_na']:
+        not_annotated=annotated.gaps().to_annotation(na())
+        hypothesis=hypothesis.crop(annotated).update(not_annotated)
+
     gecko_json=annotation_to_GeckoJSON(hypothesis, distances_per_speaker, colors)
-    dir_path=hypotheses_path if hypotheses_path.exists() else DATA_PATH
+
+    if hypotheses_path.exists():
+        dir_path = hypotheses_path
+    else:
+        dir_path = DATA_PATH / hypotheses_path.suffix
+    dir_path.mkdir(exist_ok=True)
+    
     json_path=os.path.join(dir_path,f'{uri}.json')
     with open(json_path,'w') as file:
         json.dump(gecko_json,file)
