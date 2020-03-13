@@ -145,7 +145,13 @@ def update_distances(args):
     print(f"succefully dumped {updated_path}")
 
 def get_colors(uri):
+    db=Plumcot()
+
     serie_uri=uri.split(".")[0]
+    if serie_uri not in db.get_protocols("Collection"):
+        #non PLUMCOT -> non-persistent colors for now
+        return {}
+
     colors_dir=Path(DATA_PATH,serie_uri,'colors')
     colors_dir.mkdir(exist_ok=True)
     colors_path=Path(colors_dir,f'{uri}.json')
@@ -170,7 +176,6 @@ def get_colors(uri):
             color=monologue["speaker"].get("color",next(color_gen()))
             colors[monologue["speaker"]["id"]]=color
     else: #no annotation -> falls back to character list
-        db=Plumcot()
         characters=db.get_characters(serie_uri)[uri]
         colors={character:next(color_gen()) for character in characters}
     with open(colors_path,'w') as file:
