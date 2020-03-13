@@ -35,7 +35,7 @@ sns.set_style("whitegrid", {'axes.grid' : False})
 import re
 import numpy as np
 
-from pyannote.core import Annotation
+from pyannote.core import Annotation, Segment
 from pyannote.audio.features import Precomputed
 from pyannote.database.util import load_rttm, load_id
 from pyannote.database import get_protocol,get_annotated
@@ -225,17 +225,18 @@ def gecko(args):
     distances_per_speaker=get_distances_per_speaker(features, hypothesis) if features else {}
 
     if args['--tag_na']:
-        not_annotated=annotated.gaps().to_annotation(na())
+        whole_file = Segment(0.,annotated.segments_boundaries_[-1])
+        not_annotated=annotated.gaps(whole_file).to_annotation(na())
         hypothesis=hypothesis.crop(annotated).update(not_annotated)
 
     gecko_json=annotation_to_GeckoJSON(hypothesis, distances_per_speaker, colors)
 
     if hypotheses_path.exists():
         dir_path = hypotheses_path
+        dir_path.mkdir(exist_ok=True)
     else:
-        dir_path = DATA_PATH / hypotheses_path.suffix
-    dir_path.mkdir(exist_ok=True)
-    
+        dir_path = Path(".")
+
     json_path=os.path.join(dir_path,f'{uri}.json')
     with open(json_path,'w') as file:
         json.dump(gecko_json,file)
