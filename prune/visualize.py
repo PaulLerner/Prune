@@ -182,15 +182,14 @@ def get_colors(uri):
         json.dump(colors,file)
     return colors
 
-def get_file(protocol, uri, subsets=['test','development','train'], embeddings=None):
-    for subset in subsets:
-        for reference in getattr(protocol, subset)():
-            if reference['uri']==uri:
-                if embeddings:
-                    precomputed = Precomputed(embeddings)
-                    features = precomputed(reference)
-                    return reference, features
-                return reference
+def get_file(protocol, uri, embeddings=None):
+    for reference in protocol.files():
+        if reference['uri']==uri:
+            if embeddings:
+                precomputed = Precomputed(embeddings)
+                features = precomputed(reference)
+                return reference, features
+            return reference
     raise ValueError(f'{uri} is not in {protocol}')
 
 def na():
