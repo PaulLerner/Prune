@@ -43,11 +43,12 @@ from pyannote.database import get_protocol,get_annotated
 from pyannote.metrics.diarization import DiarizationErrorRate
 import pyannote.database
 from Plumcot import Plumcot
+import Plumcot as PC
 
 from prune.convert import *
 from prune.features import *
 
-DATA_PATH=Path('/vol', 'work', 'lerner', 'pyannote-db-plumcot', 'Plumcot', 'data')
+DATA_PATH=Path(PC.__file__).parent / "data"
 
 def distances(args):
     hypotheses_path=args['<hypotheses_path>']
