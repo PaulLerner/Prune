@@ -237,8 +237,7 @@ def gecko(args):
     gecko_json=annotation_to_GeckoJSON(hypothesis, distances_per_speaker, colors)
 
     if hypotheses_path.exists():
-        dir_path = hypotheses_path
-        dir_path.mkdir(exist_ok=True)
+        dir_path = hypotheses_path.parent
     else:
         dir_path = Path(".")
 
