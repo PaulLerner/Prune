@@ -2,6 +2,7 @@
 # encoding: utf-8
 """Usage:
   visualize.py gecko (<hypotheses_path>|<database.task.protocol>) <uri> [--map  --tag_na --database.task.protocol=<database.task.protocol> --embeddings=<embeddings>]
+  visualize.py speakers (<hypotheses_path>|<database.task.protocol>) <uri>
   visualize.py update_distances <json_path> <uri> <database.task.protocol>
   visualize.py distances <hypotheses_path> <uri> <database.task.protocol>
   visualize.py stats <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
@@ -235,16 +236,34 @@ def gecko(args):
     else:
         dir_path = DATA_PATH / hypotheses_path.suffix
     dir_path.mkdir(exist_ok=True)
-    
+
     json_path=os.path.join(dir_path,f'{uri}.json')
     with open(json_path,'w') as file:
         json.dump(gecko_json,file)
     print(f"succefully dumped {json_path}")
 
+def speakers(args):
+    hypotheses_path=args['<hypotheses_path>']
+    uri=args['<uri>']
+    if Path(hypotheses_path).exists():
+        hypotheses, distances=load_id(hypotheses_path)
+        hypothesis, distances = hypotheses[uri], distances[uri]
+    else: #protocol
+        distances = {}
+        protocol = get_protocol(args['<hypotheses_path>'])
+        reference = get_file(protocol, uri)
+        hypothesis = reference['annotation']
+        annotated=get_annotated(reference)
+    print(uri)
+    print(f"Number of speakers: {len(hypothesis.labels())}")
+    print(f"Chart:\n{hypothesis.chart()}")
+
 if __name__ == '__main__':
     args = docopt(__doc__)
     if args['gecko']:
         gecko(args)
+    if args['speakers']:
+        speakers(args)
     if args['update_distances']:
         update_distances(args)
     if args['distances']:
