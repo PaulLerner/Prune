@@ -36,7 +36,7 @@ sns.set_style("whitegrid", {'axes.grid' : False})
 import re
 import numpy as np
 
-from pyannote.core import Annotation
+from pyannote.core import Annotation, Segment
 from pyannote.audio.features import Precomputed
 from pyannote.database.util import load_rttm, load_id
 from pyannote.database import get_protocol,get_annotated
@@ -146,7 +146,13 @@ def update_distances(args):
     print(f"succefully dumped {updated_path}")
 
 def get_colors(uri):
+    db=Plumcot()
+
     serie_uri=uri.split(".")[0]
+    if serie_uri not in db.get_protocols("Collection"):
+        #non PLUMCOT -> non-persistent colors for now
+        return {}
+
     colors_dir=Path(DATA_PATH,serie_uri,'colors')
     colors_dir.mkdir(exist_ok=True)
     colors_path=Path(colors_dir,f'{uri}.json')
@@ -171,22 +177,20 @@ def get_colors(uri):
             color=monologue["speaker"].get("color",next(color_gen()))
             colors[monologue["speaker"]["id"]]=color
     else: #no annotation -> falls back to character list
-        db=Plumcot()
         characters=db.get_characters(serie_uri)[uri]
         colors={character:next(color_gen()) for character in characters}
     with open(colors_path,'w') as file:
         json.dump(colors,file)
     return colors
 
-def get_file(protocol, uri, subsets=['test','development','train'], embeddings=None):
-    for subset in subsets:
-        for reference in getattr(protocol, subset)():
-            if reference['uri']==uri:
-                if embeddings:
-                    precomputed = Precomputed(embeddings)
-                    features = precomputed(reference)
-                    return reference, features
-                return reference
+def get_file(protocol, uri, embeddings=None):
+    for reference in protocol.files():
+        if reference['uri']==uri:
+            if embeddings:
+                precomputed = Precomputed(embeddings)
+                features = precomputed(reference)
+                return reference, features
+            return reference
     raise ValueError(f'{uri} is not in {protocol}')
 
 def na():
@@ -226,16 +230,17 @@ def gecko(args):
     distances_per_speaker=get_distances_per_speaker(features, hypothesis) if features else {}
 
     if args['--tag_na']:
-        not_annotated=annotated.gaps().to_annotation(na())
+        whole_file = Segment(0.,annotated.segments_boundaries_[-1])
+        not_annotated=annotated.gaps(whole_file).to_annotation(na())
         hypothesis=hypothesis.crop(annotated).update(not_annotated)
 
     gecko_json=annotation_to_GeckoJSON(hypothesis, distances_per_speaker, colors)
 
     if hypotheses_path.exists():
         dir_path = hypotheses_path
+        dir_path.mkdir(exist_ok=True)
     else:
-        dir_path = DATA_PATH / hypotheses_path.suffix
-    dir_path.mkdir(exist_ok=True)
+        dir_path = Path(".")
 
     json_path=os.path.join(dir_path,f'{uri}.json')
     with open(json_path,'w') as file:
