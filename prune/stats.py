@@ -50,9 +50,9 @@ def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
         plt.legend()
     fig_type="hist" if hist else "plot"
     save_path=os.path.join(FIGURE_DIR,f"speech_duration.{protocol_name}.{set}.{fig_type}.{keep_n}.png")
-    #plt.show()
-    plt.savefig(save_path)
-    print(f"succesfully saved {save_path}")
+    plt.show()
+    #plt.savefig(save_path)
+    #print(f"succesfully saved {save_path}")
 
 def main(args):
     protocol_name = args['<database.task.protocol>']
