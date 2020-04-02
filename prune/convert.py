@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 # encoding: utf-8
 """Usage:
-  convert.py serial_speakers <input_path> <serie_uri> <annotation_path> <annotated_path>
+  convert.py serial_speakers <input_path> <serie_uri> <annotation_path> <annotated_path> [--map]
 """
 from pyannote.core import Annotation, Segment, Timeline
 import pyannote.database
 from Plumcot import Plumcot
 
 import json
+from termcolor import colored
 import numpy as np
 import re
 from docopt import docopt
@@ -30,27 +31,8 @@ def update_labels(annotation, distances):
                 annotation[segment,track]=f"?{label}"
     return annotation
 
-def name_alignment(refs, hyps):
-    aligned_names=[]
-    size = max(len(refs), len(hyps))
-    min_size = min(len(refs), len(hyps))
-    dists = np.ones([size, size])
-    for i, ref in enumerate(refs):
-        for j, hyp in enumerate(hyps):
-            dists[i, j] = affinegap.normalizedAffineGapDistance(ref, hyp)
-    # We use Hungarian algorithm which solves the "assignment problem" in a
-    # polynomial time.
-    row_ind, col_ind = linear_sum_assignment(dists)
-    # Add names ignored by Hungarian algorithm when sizes are not equal
-    for i, ref in enumerate(refs):
-        if col_ind[i] < len(hyps):
-            aligned_names.append(hyps[col_ind[i]])
-        else:
-            aligned_names.append(ref)
-    return aligned_names
-
-def serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_path):
-    annotation_path, annotated_path = Path(annotation_path), Path(annotated_path)
+def serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_path, do_mapping = False):
+    input_path, annotation_path, annotated_path = map(Path,(input_path, annotation_path, annotated_path))
 
     if annotation_path.exists():
         raise ValueError(f"""{annotation_path} already exists.
@@ -64,10 +46,15 @@ def serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_pa
     db = Plumcot()
     character_uris = db.get_characters(serie_uri, field="character_uri")
     character_names = db.get_characters(serie_uri, field="character_name")
-
+    flat_character_uris = {uri for episode in character_uris.values() for uri in episode}
     with open(input_path, 'r') as file:
         serial_speakers = json.load(file)
-
+    unique, counts = get_serial_speaker_names(serial_speakers)
+    if do_mapping:
+        mapping = map_names(flat_character_uris, unique, counts)
+        with open(input_path.parent/f'{serie_uri}.name_mapping.json','w') as file:
+            json.dump(mapping,file,indent=4,sort_keys=True)
+        return mapping
     for season in serial_speakers['seasons']:
         season_i = season['id']
         for episode in season['episodes']:
@@ -75,19 +62,59 @@ def serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_pa
             episode_uri = f"{serie_uri}.Season{season_i:02d}.Episode{episode_i:02d}"
 
             print(f"processing {episode_uri}",end='\r')
+
             annotation, annotated = serial_speaker_to_Annotation(episode, episode_uri, 'speaker')
-            
+
             with open(annotation_path,'a') as file:
                 annotation.write_rttm(file)
             with open(annotated_path,'a') as file:
                 annotated.write_uem(file)
 
-def get_serial_speaker_names(serial_speaker):
-    return {segment['speaker'] for segment in serial_speaker["data"]["speech_segments"]}
+def get_serial_speaker_names(serial_speakers):
+    """Get all names in serial speaker annotation.
+    """
+    serial_speaker_names = [segment['speaker'] for season in serial_speakers['seasons'] for episode in season['episodes'] for segment in episode["data"]["speech_segments"]]
+    unique, counts = np.unique(serial_speaker_names,return_counts=True)
+    return unique, counts
 
 def unknown_char(char_name, id_ep):
     """Transforms character name into unknown version."""
     return f"{char_name}#unknown#{id_ep}"
+
+def map_names(character_uris, serial_speaker_names, counts):
+    mapping = {}
+    for name,count in zip(serial_speaker_names, counts):
+        norm_name = name.lower().replace(" ", "_")
+        if norm_name in character_uris:
+            character_uris.remove(norm_name)
+            mapping[name]=norm_name
+        else:
+            mapping[name]=int(count)
+
+    while True:
+        print(sorted(character_uris),'\n\n')
+        for name, norm_name in mapping.items():
+            color='green' if isinstance(norm_name,str) else 'white'
+            print(colored(f"{name} ->  {norm_name}",color))
+        request = input("\nType the name of the character which you want "
+                            "to change normalized name (end to save, stop "
+                            "to skip, unk to unknownize every character that didn't match): ")
+        # Stop and save
+        if request == "end" or not request:
+            break
+        # Wrong name
+        if request not in dic_names:
+            warnings.warn("This name doesn't match with any characters.\n")
+        else:
+            prompt=("\nType the new character's name "
+                    "(unk for unknown character): ")
+            new_name = input(prompt)
+            # Unknown character
+            if new_name == "unk" or not new_name:
+                new_name = 'unknown'
+            mapping[request] = new_name
+
+    return mapping
 
 def serial_speaker_to_Annotation(serial_speaker, uri=None, modality='speaker'):
     """
@@ -218,4 +245,5 @@ if __name__ == '__main__':
     serie_uri = args['<serie_uri>']
     annotation_path = args['<annotation_path>']
     annotated_path = args['<annotated_path>']
-    serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_path)
+    do_mapping = args['--map']
+    serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_path, do_mapping)
