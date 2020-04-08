@@ -13,6 +13,7 @@ Common options:
 
 import os
 from docopt import docopt
+from allies.utils import print_stats
 import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_style("whitegrid", {'axes.grid' : False})
@@ -72,10 +73,7 @@ def main(args):
     #     print(f"{uri} \t {speech_duration}")
     print(f"gettings stats from {protocol_name}.{set}...")
     stats=protocol.stats(set)
-    for key,value in stats.items():
-        if key=='labels' and not verbose:
-            break
-        print(key,value)
+    print_stats(stats)
 
     print("speech duration quartiles :")
     if filter_unk:
