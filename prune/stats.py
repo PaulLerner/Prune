@@ -4,7 +4,7 @@
 Gets stats and plots stuff given a protocol
 
 Usage:
-  stats.py <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
+  stats.py <database.task.protocol> [--set=<set> --min_duration=<min_duration> --filter_unk --crop=<crop> --hist --verbose]
   stats.py -h | --help
 
 Common options:
@@ -22,7 +22,7 @@ np.set_printoptions(precision=2, suppress=True)
 
 from pyannote.database import get_protocol
 
-FIGURE_DIR='/people/lerner/Images'
+FIGURE_DIR='.'
 
 def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
     keep_n=len(values) if crop is None else int(len(values)*crop)
@@ -30,8 +30,9 @@ def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
     values=values[-keep_n:]
     mean=np.mean(values)
     std=np.std(values)
-    print("mean:",mean)
-    print("std:",std)
+    print(f"mean: {mean:.2f}")
+    print(f"std: {std:.2f}")
+    print(f"mean+std: {mean+std:.2f}")
     plt.figure(figsize=(12,10))
     title=(
         f"of the speech duration in {protocol_name}.{set} "
@@ -62,6 +63,7 @@ def main(args):
     crop=float(args['--crop']) if args['--crop'] else None
     hist=args['--hist']
     verbose=args['--verbose']
+    min_duration=float(args['--min_duration']) if args['--min_duration'] else 0.0
 
     protocol = get_protocol(protocol_name)
     # print("uri \t duration (s)")
@@ -72,15 +74,13 @@ def main(args):
     #     speech_duration = annotation.get_timeline().duration()
     #     print(f"{uri} \t {speech_duration}")
     print(f"gettings stats from {protocol_name}.{set}...")
-    stats=protocol.stats(set)
+    stats=protocol.stats(set, min_duration)
     print_stats(stats)
-
-    print("speech duration quartiles :")
     if filter_unk:
         values=[value for label,value in stats['labels'].items() if '#unknown#' not in label]
     else:
         values=list(stats['labels'].values())
-    print("n_speakers:",len(values))
+    print(f"n_speaking_speakers: {np.array(values).nonzero()[0].shape[0]}")
     print("quartiles:")
     print(np.quantile(values,[0.,0.25,0.5,0.75,1.0]))
 
