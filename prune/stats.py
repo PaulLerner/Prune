@@ -4,7 +4,7 @@
 Gets stats and plots stuff given a protocol
 
 Usage:
-  stats.py <database.task.protocol> [--set=<set> --min_duration=<min_duration> --filter_unk --crop=<crop> --hist --verbose]
+  stats.py <database.task.protocol> [--set=<set> --min_duration=<min_duration> --filter_unk --crop=<crop> --hist --verbose --save]
   stats.py -h | --help
 
 Common options:
@@ -24,7 +24,7 @@ from pyannote.database import get_protocol
 
 FIGURE_DIR='.'
 
-def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
+def plot_speech_duration(values,protocol_name, set,hist=True,crop=None, save = False):
     keep_n=len(values) if crop is None else int(len(values)*crop)
     values.sort()
     values=values[-keep_n:]
@@ -49,12 +49,15 @@ def plot_speech_duration(values,protocol_name, set,hist=True,crop=None):
         plt.xlabel("speaker #")
         plt.plot(values,".")
         plt.errorbar(np.arange(len(values)),[mean for _ in values],[std for _ in values])
-        plt.legend()
+    plt.legend()
     fig_type="hist" if hist else "plot"
     save_path=os.path.join(FIGURE_DIR,f"speech_duration.{protocol_name}.{set}.{fig_type}.{keep_n}.png")
-    plt.show()
-    #plt.savefig(save_path)
-    #print(f"succesfully saved {save_path}")
+    if save:
+        plt.savefig(save_path)
+        print(f"succesfully saved {save_path}")
+    else:
+        plt.show()
+
 
 def main(args):
     protocol_name = args['<database.task.protocol>']
@@ -63,6 +66,7 @@ def main(args):
     crop=float(args['--crop']) if args['--crop'] else None
     hist=args['--hist']
     verbose=args['--verbose']
+    save= args['--save']
     min_duration=float(args['--min_duration']) if args['--min_duration'] else 0.0
 
     protocol = get_protocol(protocol_name)
@@ -87,7 +91,7 @@ def main(args):
     print("deciles:")
     print(np.quantile(values,np.arange(0,1.1,0.1)))
 
-    plot_speech_duration(values,protocol_name, set, hist,crop)
+    plot_speech_duration(values,protocol_name, set, hist,crop,save)
 
 if __name__=='__main__':
     args = docopt(__doc__)
