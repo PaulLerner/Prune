@@ -4,7 +4,6 @@
   visualize.py gecko (<hypotheses_path>|<database.task.protocol>) <uri> [--map  --tag_na --database.task.protocol=<database.task.protocol> --embeddings=<embeddings>]
   visualize.py speakers (<hypotheses_path>|<database.task.protocol>) <uri>
   visualize.py update_distances <json_path> <uri> <database.task.protocol>
-  visualize.py distances <hypotheses_path> <uri> <database.task.protocol>
   visualize.py stats <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose]
   visualize.py -h | --help
 
@@ -38,7 +37,7 @@ import numpy as np
 
 from pyannote.core import Annotation, Segment
 from pyannote.audio.features import Precomputed
-from pyannote.database.util import load_rttm, load_id
+from pyannote.database.util import load_rttm
 from pyannote.database import get_protocol,get_annotated
 from pyannote.metrics.diarization import DiarizationErrorRate
 import pyannote.database
@@ -49,61 +48,6 @@ from prune.convert import *
 from prune.features import *
 
 DATA_PATH=Path(PC.__file__).parent / "data"
-
-def distances(args):
-    hypotheses_path=args['<hypotheses_path>']
-    hypotheses, distances=load_id(hypotheses_path)
-    uri=args['<uri>']
-    hypothesis, distances = hypotheses[uri], distances[uri]
-    protocol=args['<database.task.protocol>']
-    protocol = get_protocol(protocol)
-    for reference in getattr(protocol, 'test')():
-        if reference['uri']==uri:
-            break
-    if reference['uri']!=uri:
-        raise ValueError(f"{uri} is not in {protocol}.test")
-    annotated=get_annotated(reference)
-    annotation=reference['annotation'].crop(annotated)
-    true_distances,false_distances=[],[]
-    tp,fp=0,0
-    close_duration,far_duration=[],[]
-    for segment, track, label in hypothesis.itertracks(yield_label=True):
-        distance=distances.get(segment)
-        distance=distance.get(label) if distance else None
-        distance= distance if distance !="<NA>" else None
-        annotation_segment=annotation.crop(segment)
-        if distance:
-            if distance < DISTANCE_THRESHOLD:
-                close_duration.append(segment.duration)
-            else:
-                far_duration.append(segment.duration)
-        if label in annotation_segment.labels():
-            true_distances.append(distance)
-            tp+=segment.duration
-        else:
-            false_distances.append(distance)
-            fp+=segment.duration
-    print("debug precision %:",tp/(tp+fp))
-
-    density=False
-    true_label=f"True Positives ({len(true_distances)} #, {tp:.0f} s)"
-    n, bins, patches=plt.hist(true_distances,30,density=density,alpha=0.5,label=true_label)
-    false_label=f"False Positives ({len(false_distances)} #, {fp:.0f} s)"
-    plt.hist(false_distances,bins,density=density,alpha=0.5, label=false_label)
-    plt.axvline(x=DISTANCE_THRESHOLD,color="black", linestyle='dashed')
-    close_text=f"{len(close_duration)} #, {sum(close_duration):.0f} s"
-    plt.text(DISTANCE_THRESHOLD-0.2, np.max(n)/2, close_text)
-    far_text=f"{len(far_duration)} #, {sum(far_duration):.0f} s"
-    plt.text(DISTANCE_THRESHOLD+0.2, np.max(n)/2, far_text)
-    plt.legend()
-    title="FA: distance between hypothesis and reference in identification pipeline\n"
-    #title+="without clustering"
-    title+="clustering @DER"
-    print(re.sub("\s","_",title))
-    plt.title(title)
-    plt.ylabel("number of segments")
-    plt.xlabel("angular distance")
-    plt.show()
 
 def color_gen():
     cm = get_cmap('Set1')
@@ -203,11 +147,11 @@ def gecko(args):
     hypotheses_path=args['<hypotheses_path>']
     uri=args['<uri>']
     colors=get_colors(uri)
+    distances = {}
     if Path(hypotheses_path).exists():
-        hypotheses, distances=load_id(hypotheses_path)
-        hypothesis, distances = hypotheses[uri], distances[uri]
+        hypotheses=load_rttm(hypotheses_path)
+        hypothesis = hypotheses[uri]
     else: #protocol
-        distances = {}
         protocol = get_protocol(args['<hypotheses_path>'])
         reference = get_file(protocol, uri)
         hypothesis = reference['annotation']
@@ -251,8 +195,8 @@ def speakers(args):
     hypotheses_path=args['<hypotheses_path>']
     uri=args['<uri>']
     if Path(hypotheses_path).exists():
-        hypotheses, distances=load_id(hypotheses_path)
-        hypothesis, distances = hypotheses[uri], distances[uri]
+        hypotheses=load_rttm(hypotheses_path)
+        hypothesis = hypotheses[uri]
     else: #protocol
         distances = {}
         protocol = get_protocol(args['<hypotheses_path>'])
@@ -271,8 +215,6 @@ if __name__ == '__main__':
         speakers(args)
     if args['update_distances']:
         update_distances(args)
-    if args['distances']:
-        distances(args)
     if args['stats']:
-        from stats import main as stats
+        from .stats import main as stats
         stats(args)
