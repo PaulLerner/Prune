@@ -59,6 +59,14 @@ def plot_speech_duration(values,protocol_name, set,hist=True,crop=None, save = F
         plt.show()
 
 
+def quartiles(array, **kwargs):
+    return np.quantile(array, [0., 0.25, 0.5, 0.75, 1.0], **kwargs)
+
+
+def deciles(array, **kwargs):
+    return np.quantile(array, np.arange(0,1.1,0.1), **kwargs)
+
+
 def main(args):
     protocol_name = args['<database.task.protocol>']
     set=args['--set'] if args['--set'] else "train"
@@ -86,10 +94,10 @@ def main(args):
         values=list(stats['labels'].values())
     print(f"n_speaking_speakers: {np.array(values).nonzero()[0].shape[0]}")
     print("quartiles:")
-    print(np.quantile(values,[0.,0.25,0.5,0.75,1.0]))
+    print(quartiles(values))
 
     print("deciles:")
-    print(np.quantile(values,np.arange(0,1.1,0.1)))
+    print(deciles(values))
 
     plot_speech_duration(values,protocol_name, set, hist,crop,save)
 
