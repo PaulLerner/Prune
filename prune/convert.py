@@ -16,23 +16,27 @@ from pathlib import Path
 import affinegap
 from scipy.optimize import linear_sum_assignment
 
-DISTANCE_THRESHOLD=0.5
-NA_VALUES={'','<NA>'}
+DISTANCE_THRESHOLD = 0.5
+NA_VALUES = {'', '<NA>'}
+
 
 def update_labels(annotation, distances):
     """Tag labels with "?" depending on their distance to the reference
     """
     for segment, track, label in annotation.itertracks(yield_label=True):
-        distance=distances.get(segment)
-        distance=distance.get(label) if distance else None
-        distance= distance if distance !="<NA>" else None
+        distance = distances.get(segment)
+        distance = distance.get(label) if distance else None
+        distance = distance if distance != "<NA>" else None
         if distance:
             if distance > DISTANCE_THRESHOLD:
-                annotation[segment,track]=f"?{label}"
+                annotation[segment, track] = f"?{label}"
     return annotation
 
-def serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_path, do_mapping = False):
-    input_path, annotation_path, annotated_path = map(Path,(input_path, annotation_path, annotated_path))
+
+def serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_path,
+                            do_mapping=False):
+    input_path, annotation_path, annotated_path = map(Path, (
+    input_path, annotation_path, annotated_path))
 
     if annotation_path.exists():
         raise ValueError(f"""{annotation_path} already exists.
@@ -52,8 +56,8 @@ def serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_pa
     unique, counts = get_serial_speaker_names(serial_speakers)
     if do_mapping:
         mapping = map_names(flat_character_uris, unique, counts)
-        with open(input_path.parent/f'{serie_uri}.name_mapping.json','w') as file:
-            json.dump(mapping,file,indent=4,sort_keys=True)
+        with open(input_path.parent / f'{serie_uri}.name_mapping.json', 'w') as file:
+            json.dump(mapping, file, indent=4, sort_keys=True)
         return mapping
     for season in serial_speakers['seasons']:
         season_i = season['id']
@@ -61,44 +65,50 @@ def serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_pa
             episode_i = episode['id']
             episode_uri = f"{serie_uri}.Season{season_i:02d}.Episode{episode_i:02d}"
 
-            print(f"processing {episode_uri}",end='\r')
+            print(f"processing {episode_uri}", end='\r')
 
-            annotation, annotated = serial_speaker_to_Annotation(episode, episode_uri, 'speaker')
+            annotation, annotated = serial_speaker_to_Annotation(episode, episode_uri,
+                                                                 'speaker')
 
-            with open(annotation_path,'a') as file:
+            with open(annotation_path, 'a') as file:
                 annotation.write_rttm(file)
-            with open(annotated_path,'a') as file:
+            with open(annotated_path, 'a') as file:
                 annotated.write_uem(file)
+
 
 def get_serial_speaker_names(serial_speakers):
     """Get all names in serial speaker annotation.
     """
-    serial_speaker_names = [segment['speaker'] for season in serial_speakers['seasons'] for episode in season['episodes'] for segment in episode["data"]["speech_segments"]]
-    unique, counts = np.unique(serial_speaker_names,return_counts=True)
+    serial_speaker_names = [segment['speaker'] for season in serial_speakers['seasons']
+                            for episode in season['episodes'] for segment in
+                            episode["data"]["speech_segments"]]
+    unique, counts = np.unique(serial_speaker_names, return_counts=True)
     return unique, counts
+
 
 def unknown_char(char_name, id_ep):
     """Transforms character name into unknown version."""
     return f"{char_name}#unknown#{id_ep}"
 
+
 def map_names(character_uris, serial_speaker_names, counts):
     mapping = {}
-    for name,count in zip(serial_speaker_names, counts):
+    for name, count in zip(serial_speaker_names, counts):
         norm_name = name.lower().replace(" ", "_")
         if norm_name in character_uris:
             character_uris.remove(norm_name)
-            mapping[name]=norm_name
+            mapping[name] = norm_name
         else:
-            mapping[name]=int(count)
+            mapping[name] = int(count)
 
     while True:
-        print(sorted(character_uris),'\n\n')
+        print(sorted(character_uris), '\n\n')
         for name, norm_name in mapping.items():
-            color='green' if isinstance(norm_name,str) else 'white'
-            print(colored(f"{name} ->  {norm_name}",color))
+            color = 'green' if isinstance(norm_name, str) else 'white'
+            print(colored(f"{name} ->  {norm_name}", color))
         request = input("\nType the name of the character which you want "
-                            "to change normalized name (end to save, stop "
-                            "to skip, unk to unknownize every character that didn't match): ")
+                        "to change normalized name (end to save, stop "
+                        "to skip, unk to unknownize every character that didn't match): ")
         # Stop and save
         if request == "end" or not request:
             break
@@ -106,8 +116,8 @@ def map_names(character_uris, serial_speaker_names, counts):
         if request not in dic_names:
             warnings.warn("This name doesn't match with any characters.\n")
         else:
-            prompt=("\nType the new character's name "
-                    "(unk for unknown character): ")
+            prompt = ("\nType the new character's name "
+                      "(unk for unknown character): ")
             new_name = input(prompt)
             # Unknown character
             if new_name == "unk" or not new_name:
@@ -115,6 +125,7 @@ def map_names(character_uris, serial_speaker_names, counts):
             mapping[request] = new_name
 
     return mapping
+
 
 def serial_speaker_to_Annotation(serial_speaker, uri=None, modality='speaker'):
     """
@@ -143,15 +154,16 @@ def serial_speaker_to_Annotation(serial_speaker, uri=None, modality='speaker'):
     not_annotated = Timeline(uri=uri)
 
     for segment in serial_speaker["data"]["speech_segments"]:
-        time = Segment(segment["start"],segment["end"])
+        time = Segment(segment["start"], segment["end"])
         speaker_id = segment['speaker'].replace(" ", "_")
         annotation[time, speaker_id] = speaker_id
         if speaker_id == 'unknown':
             not_annotated.add(time)
 
-    end=serial_speaker.get("duration",segment["end"])
-    annotated=not_annotated.gaps(support=Segment(0.0,end))
+    end = serial_speaker.get("duration", segment["end"])
+    annotated = not_annotated.gaps(support=Segment(0.0, end))
     return annotation, annotated
+
 
 def gecko_JSON_to_Annotation(gecko_JSON, uri=None, modality='speaker'):
     """
@@ -182,23 +194,24 @@ def gecko_JSON_to_Annotation(gecko_JSON, uri=None, modality='speaker'):
     cannot_link = Annotation(uri, f"non-{modality}")
 
     for monologue in gecko_JSON["monologues"]:
-        segment = Segment(monologue["start"],monologue["end"])
+        segment = Segment(monologue["start"], monologue["end"])
         # '@' defined in https://github.com/hbredin/pyannote-db-plumcot/blob/develop/CONTRIBUTING.md#idepisodetxt
         # '+' defined in https://github.com/gong-io/gecko/blob/master/app/geckoModule/constants.js#L35
-        speaker_ids=re.split("@|\+",monologue["speaker"]["id"])
-        speaker_ids=set(speaker_ids)-NA_VALUES
-        for speaker_id in speaker_ids:#most of the time there's only one
-            annotation[segment,speaker_id] = speaker_id
+        speaker_ids = re.split("@|\+", monologue["speaker"]["id"])
+        speaker_ids = set(speaker_ids) - NA_VALUES
+        for speaker_id in speaker_ids:  # most of the time there's only one
+            annotation[segment, speaker_id] = speaker_id
             if monologue["speaker"]["annotators"] > 0:
-                must_link[segment,speaker_id] = speaker_id
+                must_link[segment, speaker_id] = speaker_id
 
         non_ids = monologue["speaker"]["non_id"]
-        non_ids=set(non_ids)-NA_VALUES
+        non_ids = set(non_ids) - NA_VALUES
         for speaker_id in non_ids:
-            cannot_link[segment,speaker_id] = speaker_id
+            cannot_link[segment, speaker_id] = speaker_id
 
-    annotated=Timeline([Segment(0.0,monologue["end"])],uri)
+    annotated = Timeline([Segment(0.0, monologue["end"])], uri)
     return annotation, must_link, cannot_link, annotated
+
 
 def annotation_to_GeckoJSON(annotation, distances={}, colors={}):
     """
@@ -218,26 +231,27 @@ def annotation_to_GeckoJSON(annotation, distances={}, colors={}):
         should be written to a file using json.dump
     """
 
-    gecko_json=json.loads("""{
+    gecko_json = json.loads("""{
       "schemaVersion" : "3.1",
       "monologues" : [  ]
     }""")
     for segment, track, label in annotation.itertracks(yield_label=True):
-        distance=distances.get(label, {}).get(segment)
-        color=colors.get(label)
+        distance = distances.get(label, {}).get(segment)
+        color = colors.get(label)
         gecko_json["monologues"].append(
             {
-                "speaker":{
-                    "id":label,
+                "speaker": {
+                    "id": label,
                     "color": color,
-                    "distance":distance,
-                    "non_id":[],
-                    "annotators":0
+                    "distance": distance,
+                    "non_id": [],
+                    "annotators": 0
                 },
-                "start" : segment.start,
-                "end" : segment.end
-        })
+                "start": segment.start,
+                "end": segment.end
+            })
     return gecko_json
+
 
 if __name__ == '__main__':
     args = docopt(__doc__)
@@ -246,4 +260,5 @@ if __name__ == '__main__':
     annotation_path = args['<annotation_path>']
     annotated_path = args['<annotated_path>']
     do_mapping = args['--map']
-    serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_path, do_mapping)
+    serial_speakers_to_RTTM(input_path, serie_uri, annotation_path, annotated_path,
+                            do_mapping)
