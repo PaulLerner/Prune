@@ -4,7 +4,7 @@
 Gets stats and plots stuff given a protocol
 
 Usage:
-  stats.py <database.task.protocol> [--set=<set> --min_duration=<min_duration> --filter_unk --crop=<crop> --hist --verbose --save]
+  stats.py <database.task.protocol> [--set=<set> --filter_unk --crop=<crop> --hist --verbose --save]
   stats.py -h | --help
 
 Common options:
@@ -75,7 +75,6 @@ def main(args):
     hist=args['--hist']
     verbose=args['--verbose']
     save= args['--save']
-    min_duration=float(args['--min_duration']) if args['--min_duration'] else 0.0
 
     protocol = get_protocol(protocol_name)
     # print("uri \t duration (s)")
@@ -86,7 +85,7 @@ def main(args):
     #     speech_duration = annotation.get_timeline().duration()
     #     print(f"{uri} \t {speech_duration}")
     print(f"gettings stats from {protocol_name}.{set}...")
-    stats=protocol.stats(set, min_duration)
+    stats=protocol.stats(set)
     print_stats(stats)
     if filter_unk:
         values=[value for label,value in stats['labels'].items() if '#unknown#' not in label]
