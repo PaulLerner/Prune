@@ -57,26 +57,25 @@ class SidNet(Module):
                 for parameter in module.parameters(recurse=True):
                     parameter.requires_grad = False
 
-    def forward(self, input_ids, targets_ids,
-                audio_similarity=None, attention_mask=None, tgt_mask=None,
-                src_key_padding_mask=None, tgt_key_padding_mask=None):
+    def forward(self, input_ids, target_ids,
+                audio_similarity=None, src_key_padding_mask=None, tgt_key_padding_mask=None):
         """Apply model
 
         Parameters
         ----------
         input_ids: Tensor
             (batch_size, max_length). Encoded input tokens using BertTokenizer
-        targets_ids: Tensor
+        target_ids: Tensor
             (batch_size, max_length). Encoded target tokens using BertTokenizer
         audio_similarity: Tensor, optional
             (batch_size, max_length, max_length). Similarity (e.g. cosine distance)
-            between audio embeddings of words, aligned with targets_ids.
+            between audio embeddings of words, aligned with target_ids.
             Defaults to None, indicating that the model should rely only on the text.
         src_key_padding_mask: Tensor, optional
             (batch_size, max_length). Used to mask input_ids.
             Defaults to None (no masking).
         tgt_key_padding_mask: Tensor, optional
-            (batch_size, max_length). Used to mask targets_ids.
+            (batch_size, max_length). Used to mask target_ids.
             Defaults to None (no masking).
 
         Returns
@@ -85,10 +84,10 @@ class SidNet(Module):
             (batch_size, max_length). Model's hypothesis encoded like input_ids
         """
         # pass input text trough bert
-        hidden_states = self.bert(input_ids, attention_mask)[0]
+        hidden_states = self.bert(input_ids, src_key_padding_mask)[0]
 
         # embed targets using bert embeddings
-        embedded_targets = self.bert.embeddings(targets_ids)
+        embedded_targets = self.bert.embeddings(target_ids)
 
         # reshape BertModel output like (sequence_length, batch_size, hidden_size)
         # to fit torch.nn.Transformer
