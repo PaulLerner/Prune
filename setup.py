@@ -8,6 +8,7 @@ setup(
     name='Prune',
     packages=find_packages(),
     scripts=[
+        "prune/named_id.py",
         "prune/stats.py",
         "prune/visualize.py",
         "prune/convert.py"
