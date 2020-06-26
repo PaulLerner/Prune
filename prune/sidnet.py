@@ -3,13 +3,27 @@
 
 from typing import List
 
+import numpy as np
+
 from transformers import BertModel, BertConfig, BertTokenizer
 from torch.nn import Transformer, Module, Linear, CrossEntropyLoss
-from torch.cuda import is_available
+from torch.cuda import device_count
 from torch import device
 
 
-device = device("cuda" if is_available() else "cpu")
+devices = [device('cpu')] if device_count() == 0 else \
+              [device(f"cuda:{i}") for i in range(device_count())]
+
+
+def total_params(module):
+    """Beware to freeze the relevant parameters before computing this."""
+    trainable, total = 0., 0.
+    for param in module.parameters():
+        size = np.prod(param.size())
+        total += size
+        if param.requires_grad:
+            trainable += size
+    return trainable, total
 
 
 class SidNet(Module):
@@ -46,10 +60,12 @@ class SidNet(Module):
 
     def __init__(self, bert='bert-base-cased', vocab_size=28996, audio=None, **kwargs):
         super().__init__()
-        self.bert = BertModel.from_pretrained(bert)
+        # put bert in the first device
+        self.bert = BertModel.from_pretrained(bert).to(device=devices[0])
         self.hidden_size = self.bert.config.hidden_size
-        self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs)
-        self.linear = Linear(self.hidden_size, vocab_size)
+        # and the rest on the last device (hopefully another one)
+        self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=devices[-1])
+        self.linear = Linear(self.hidden_size, vocab_size).to(device=devices[-1])
 
     def freeze(self, names: List[str]):
         """Freeze parts of the model
@@ -65,6 +81,17 @@ class SidNet(Module):
             if name in names:
                 for parameter in module.parameters(recurse=True):
                     parameter.requires_grad = False
+
+    def __repr__(self):
+        for name, module in self.named_modules():
+            if name == "":
+                name = 'model'
+                indent = ''
+            else:
+                indent = '    ' * (name.count('.') + 1)
+                name = name.split('.')[-1]
+            trainable, total = total_params(module)
+            print(f'{indent} {name} ({module.__class__.__name__}): {trainable}, {total}')
 
     def forward(self, input_ids, target_ids,
                 audio_similarity=None, src_key_padding_mask=None, tgt_key_padding_mask=None):
@@ -92,6 +119,15 @@ class SidNet(Module):
         output: Tensor
             (batch_size, max_length). Model's hypothesis encoded like input_ids
         """
+        # manage devices (see __init__)
+        input_ids, target_ids = input_ids.to(devices[0]), target_ids.to(devices[-1])
+        if src_key_padding_mask is not None:
+            src_key_padding_mask = src_key_padding_mask.to(devices[0])
+        if tgt_key_padding_mask is not None:
+            tgt_key_padding_mask = tgt_key_padding_mask.to(devices[-1])
+        if audio_similarity is not None:
+            audio_similarity = audio_similarity.to(devices[-1])
+            
         # pass input text trough bert
         hidden_states = self.bert(input_ids, src_key_padding_mask)[0]
 
@@ -99,19 +135,19 @@ class SidNet(Module):
         embedded_targets = self.bert.embeddings(target_ids)
 
         # reshape BertModel output like (sequence_length, batch_size, hidden_size)
-        # to fit torch.nn.Transformer
-        hidden_states = hidden_states.transpose(0, 1)
-        embedded_targets = embedded_targets.transpose(0, 1)
+        # to fit torch.nn.Transformer and manage devices (see __init__)
+        hidden_states = hidden_states.transpose(0, 1).to(devices[-1])
+        embedded_targets = embedded_targets.transpose(0, 1).to(devices[-1])
 
         # FIXME are all these masks done the right way ?
         src_mask = self.seq2seq.generate_square_subsequent_mask(
-                       len(hidden_states)).to(device)
+                       len(hidden_states)).to(devices[-1])
         tgt_mask = self.seq2seq.generate_square_subsequent_mask(
-                       len(embedded_targets)).to(device)
-        # convert HuggingFace mask to PyTorch mask
+                       len(embedded_targets)).to(devices[-1])
+        # convert HuggingFace mask to PyTorch mask and manage devices
         #     HuggingFace: 1    -> NOT MASKED, 0     -> MASKED
         #     PyTorch:     True -> MASKED,     False -> NOT MASKED
-        src_key_padding_mask = ~src_key_padding_mask.bool()
+        src_key_padding_mask = ~src_key_padding_mask.bool().to(devices[-1])
         tgt_key_padding_mask = ~tgt_key_padding_mask.bool()
         text_output = self.seq2seq(hidden_states, embedded_targets,
                                    src_mask=src_mask, tgt_mask=tgt_mask,

@@ -26,7 +26,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
 from torch.nn import CrossEntropyLoss
 from transformers import BertTokenizer
-from prune.sidnet import SidNet, device
+from prune.sidnet import SidNet
 
 np.random.seed(0)
 manual_seed(0)
@@ -70,8 +70,8 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
         Additional arguments are passed to the model Transformer
     """
     model = SidNet(bert, vocab_size, audio, **kwargs)
-    model.to(device=device)
     model.freeze(freeze)
+    print(model)
     model.train()
 
     criterion = CrossEntropyLoss(ignore_index=pad_int)
@@ -84,15 +84,6 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
 
         epoch_loss = 0.
         for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
-            # manage device
-            input_ids, target_ids = input_ids.to(device), target_ids.to(device)
-            if src_key_padding_mask is not None:
-                src_key_padding_mask = src_key_padding_mask.to(device) 
-            if tgt_key_padding_mask is not None:
-                tgt_key_padding_mask = tgt_key_padding_mask.to(device)
-            if audio_similarity is not None: 
-                audio_similarity = audio_similarity.to(device)
-
             # forward pass
             output = model(input_ids, target_ids, audio_similarity,
                            src_key_padding_mask, tgt_key_padding_mask)
