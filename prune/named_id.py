@@ -4,10 +4,10 @@
 """Usage:
 named_id.py train <protocol> [--subset=<subset> --batch=<batch> --window=<window> --step=<step>]
 
---subset=<subset> Protocol subset, one of 'train', 'development' or 'test' [Default: test]
---batch=<batch>   Batch size [Default: 128]
---window=<window> Window size [Default: 8]
---step=<step>     Step size [Default: 1]
+--subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test' [default: test]
+--batch=<batch>		 Batch size [default: 128]
+--window=<window>	 Window size [default: 8]
+--step=<step>		 Step size [default: 1]
 """
 
 from docopt import docopt
@@ -21,24 +21,22 @@ import Plumcot as PC
 
 import numpy as np
 
-from torch import save, device, manual_seed
-from torch.cuda import is_available
+from torch import save, manual_seed
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
 from torch.nn import CrossEntropyLoss
 from transformers import BertTokenizer
-from .sidnet import SidNet
+from prune.sidnet import SidNet, device
 
 np.random.seed(0)
 manual_seed(0)
 DATA_PATH = Path(PC.__file__).parent / 'data'
 pad_token, pad_int = '[PAD]', 0
-device = device("cuda" if is_available() else "cpu")
 max_length = 256
 
 
-def train(batches, bert='bert-base-cased', audio=None, lr=1e-3, epochs=100,
-          freeze=['bert'], save_every=1, **kwargs):
+def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3, 
+          epochs=100, freeze=['bert'], save_every=1, **kwargs):
     """Train the model for `epochs` epochs
 
     Parameters
@@ -49,6 +47,9 @@ def train(batches, bert='bert-base-cased', audio=None, lr=1e-3, epochs=100,
     bert: `str`, optional
         Model name or path, see BertTokenizer.from_pretrained
         Defaults to 'bert-base-cased'.
+    vocab_size: `int`, optional
+        Output dimension of the model (should be inferred from vocab_size of BertTokenizer)
+        Defaults to 28996
     audio: `Wrappable`, optional
         Describes how raw speaker embeddings should be obtained.
         See pyannote.audio.features.wrapper.Wrapper documentation for details.
@@ -68,17 +69,30 @@ def train(batches, bert='bert-base-cased', audio=None, lr=1e-3, epochs=100,
     **kwargs:
         Additional arguments are passed to the model Transformer
     """
-
-    criterion = CrossEntropyLoss(ignore_index=pad_int)
-    optimizer = Adam(lr=lr)
-    model = SidNet(bert, audio, **kwargs)
+    model = SidNet(bert, vocab_size, audio, **kwargs)
     model.to(device=device)
     model.freeze(freeze)
     model.train()
+
+    criterion = CrossEntropyLoss(ignore_index=pad_int)
+    optimizer = Adam(model.parameters(), lr=lr)
+
     tb = SummaryWriter()
-    for epoch in tqdm(range(len(epochs)), desc='Training'):
+    for epoch in tqdm(range(epochs), desc='Training'):
+        # shuffle batches
+        np.random.shuffle(batches)
+
         epoch_loss = 0.
         for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+            # manage device
+            input_ids, target_ids = input_ids.to(device), target_ids.to(device)
+            if src_key_padding_mask is not None:
+                src_key_padding_mask = src_key_padding_mask.to(device) 
+            if tgt_key_padding_mask is not None:
+                tgt_key_padding_mask = tgt_key_padding_mask.to(device)
+            if audio_similarity is not None: 
+                audio_similarity = audio_similarity.to(device)
+
             # forward pass
             output = model(input_ids, target_ids, audio_similarity,
                            src_key_padding_mask, tgt_key_padding_mask)
@@ -88,10 +102,12 @@ def train(batches, bert='bert-base-cased', audio=None, lr=1e-3, epochs=100,
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
+
         tb.add_scalar('Loss/train', epoch_loss, epoch)
+
         if epoch % save_every == 0:
-            save(model, f'{model.__class__.__name__}.{epoch:04d}.pt')
-            save(optimizer, f'{optimizer.__class__.__name__}.{epoch:04d}.pt')
+            save(model, f'weights/{model.__class__.__name__}.{epoch:04d}.pt')
+            save(optimizer, f'weights/{optimizer.__class__.__name__}.{epoch:04d}.pt')
 
     return model, optimizer
 
@@ -104,6 +120,14 @@ def batchify(protocol, mapping, subset='train', bert='bert-base-cased',
 
     mapping is used to convert normalized speaker names into its most common name.
     Note that it's important that this name is as written in the input text.
+
+    Returns
+    -------
+    batches: List[Tuple[Tensor]]:
+        (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        see batch_encode_multi
+    vocab_size: int
+        tokenizer.vocab_size
     """
 
     with open(mapping) as file:
@@ -164,7 +188,7 @@ def batchify(protocol, mapping, subset='train', bert='bert-base-cased',
         # encode batch (i.e. tokenize, tensorize...)
         batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch)
         batches.append(batch)
-    return batches
+    return batches, tokenizer.vocab_size
 
 
 def batch_encode_plus(tokenizer, text_batch):
@@ -245,19 +269,21 @@ if __name__ == '__main__':
     # parse arguments and get protocol
     args = docopt(__doc__)
     protocol_name = args['<protocol>']
-    subset = args['--subset']
-    batch_size = int(args['--batch'])
-    window_size = int(args['--window'])
-    step_size = int(args['--step'])
+    subset = args['--subset'] if args['--subset'] else 'train'
+    batch_size = int(args['--batch']) if args['--batch'] else 128
+    window_size = int(args['--window']) if args['--window'] else 8
+    step_size = int(args['--step']) if args['--step'] else 1
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
     mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
 
     # get batches from protocol subset
-    batches = batchify(protocol, mapping, subset,
-                       batch_size=batch_size, window_size=window_size, step_size=step_size)
+    batches, vocab_size = batchify(protocol, mapping, subset,
+                                   batch_size=batch_size, 
+                                   window_size=window_size, 
+                                   step_size=step_size)
 
     if args['train']:
-        model, optimizer = train(batches)
+        model, optimizer = train(batches, vocab_size=vocab_size)
 
 

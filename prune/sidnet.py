@@ -5,6 +5,12 @@ from typing import List
 
 from transformers import BertModel, BertConfig, BertTokenizer
 from torch.nn import Transformer, Module, Linear, CrossEntropyLoss
+from torch.cuda import is_available
+from torch import device
+
+
+device = device("cuda" if is_available() else "cpu")
+
 
 class SidNet(Module):
     """Named-Speaker Identification Network
@@ -23,6 +29,9 @@ class SidNet(Module):
     bert: `str`, optional
         Model name or path, see BertTokenizer.from_pretrained
         Defaults to 'bert-base-cased'.
+    vocab_size: `int`, optional
+        Output dimension of the model (should be inferred from vocab_size of BertTokenizer)
+        Defaults to 28996
     audio: `Wrappable`, optional
         Describes how raw speaker embeddings should be obtained.
         See pyannote.audio.features.wrapper.Wrapper documentation for details.
@@ -35,12 +44,12 @@ class SidNet(Module):
     TODO
     """
 
-    def __init__(self, bert='bert-base-cased', audio=None, **kwargs):
+    def __init__(self, bert='bert-base-cased', vocab_size=28996, audio=None, **kwargs):
         super().__init__()
         self.bert = BertModel.from_pretrained(bert)
-        self.hidden_size = self.embedding.config.hidden_size
+        self.hidden_size = self.bert.config.hidden_size
         self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs)
-        self.linear = Linear(self.hidden_size, self.tokenizer.vocab_size)
+        self.linear = Linear(self.hidden_size, vocab_size)
 
     def freeze(self, names: List[str]):
         """Freeze parts of the model
@@ -95,8 +104,15 @@ class SidNet(Module):
         embedded_targets = embedded_targets.transpose(0, 1)
 
         # FIXME are all these masks done the right way ?
-        src_mask = self.seq2seq.generate_square_subsequent_mask(len(hidden_states))
-        tgt_mask = self.seq2seq.generate_square_subsequent_mask(len(embedded_targets))
+        src_mask = self.seq2seq.generate_square_subsequent_mask(
+                       len(hidden_states)).to(device)
+        tgt_mask = self.seq2seq.generate_square_subsequent_mask(
+                       len(embedded_targets)).to(device)
+        # convert HuggingFace mask to PyTorch mask
+        #     HuggingFace: 1    -> NOT MASKED, 0     -> MASKED
+        #     PyTorch:     True -> MASKED,     False -> NOT MASKED
+        src_key_padding_mask = ~src_key_padding_mask.bool()
+        tgt_key_padding_mask = ~tgt_key_padding_mask.bool()
         text_output = self.seq2seq(hidden_states, embedded_targets,
                                    src_mask=src_mask, tgt_mask=tgt_mask,
                                    src_key_padding_mask=src_key_padding_mask,
