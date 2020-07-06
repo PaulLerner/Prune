@@ -83,7 +83,8 @@ class SidNet(Module):
                     parameter.requires_grad = False
 
     def __str__(self):
-        """Prints model architecture along with trainable and total # of parameters"""
+        """Stringify model architecture along with trainable and total # of parameters"""
+        lines = []
         for name, module in self.named_modules():
             if name == "":
                 name = 'model'
@@ -92,7 +93,9 @@ class SidNet(Module):
                 indent = '    ' * (name.count('.') + 1)
                 name = name.split('.')[-1]
             trainable, total = total_params(module)
-            print(f'{indent} {name} ({module.__class__.__name__}): {trainable:,d}, {total:,d}')
+            lines.append(f'{indent} {name} ({module.__class__.__name__}): '
+                         f'{trainable:,d} ({total:,d} total)')
+        return '\n'.join(lines)
 
     def forward(self, input_ids, target_ids,
                 audio_similarity=None, src_key_padding_mask=None, tgt_key_padding_mask=None):
