@@ -107,7 +107,7 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
             optimizer.step()
             epoch_loss += loss.item()
 
-        tb.add_scalar('Loss/train', epoch_loss, epoch)
+        tb.add_scalar('Loss/train', epoch_loss/len(batches), epoch)
 
         if epoch % save_every == 0:
             save(model, f'weights/{model.__class__.__name__}.{epoch:04d}.pt')
