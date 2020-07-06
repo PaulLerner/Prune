@@ -84,6 +84,8 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
 
         epoch_loss = 0.
         for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+            optimizer.zero_grad()
+
             # forward pass
             output = model(input_ids, target_ids, audio_similarity,
                            src_key_padding_mask, tgt_key_padding_mask)
