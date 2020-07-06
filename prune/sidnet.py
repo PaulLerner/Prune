@@ -5,8 +5,8 @@ from typing import List
 
 import numpy as np
 
-from transformers import BertModel, BertConfig, BertTokenizer
-from torch.nn import Transformer, Module, Linear, CrossEntropyLoss
+from transformers import BertModel
+from torch.nn import Transformer, Module, Linear
 from torch.cuda import device_count
 from torch import device
 
