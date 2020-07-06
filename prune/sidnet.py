@@ -17,7 +17,7 @@ devices = [device('cpu')] if device_count() == 0 else \
 
 def total_params(module):
     """Beware to freeze the relevant parameters before computing this."""
-    trainable, total = 0., 0.
+    trainable, total = 0, 0
     for param in module.parameters():
         size = np.prod(param.size())
         total += size
@@ -82,7 +82,8 @@ class SidNet(Module):
                 for parameter in module.parameters(recurse=True):
                     parameter.requires_grad = False
 
-    def __repr__(self):
+    def __str__(self):
+        """Prints model architecture along with trainable and total # of parameters"""
         for name, module in self.named_modules():
             if name == "":
                 name = 'model'
@@ -91,7 +92,7 @@ class SidNet(Module):
                 indent = '    ' * (name.count('.') + 1)
                 name = name.split('.')[-1]
             trainable, total = total_params(module)
-            print(f'{indent} {name} ({module.__class__.__name__}): {trainable}, {total}')
+            print(f'{indent} {name} ({module.__class__.__name__}): {trainable:,d}, {total:,d}')
 
     def forward(self, input_ids, target_ids,
                 audio_similarity=None, src_key_padding_mask=None, tgt_key_padding_mask=None):
