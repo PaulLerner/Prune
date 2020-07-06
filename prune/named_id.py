@@ -4,7 +4,7 @@
 """Usage:
 named_id.py train <protocol> [--subset=<subset> --batch=<batch> --window=<window> --step=<step>]
 
---subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test' [default: test]
+--subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test' [default: train]
 --batch=<batch>		 Batch size [default: 128]
 --window=<window>	 Window size [default: 8]
 --step=<step>		 Step size [default: 1]
