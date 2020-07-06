@@ -64,6 +64,8 @@ class SidNet(Module):
         # and the seq2seq in the last (hopefully another) one
         self.bert = BertModel.from_pretrained(bert).to(device=devices[0])
         self.hidden_size = self.bert.config.hidden_size
+        self.src_mask = None
+        self.tgt_mask = None
         self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=devices[-1])
         self.linear = Linear(self.hidden_size, vocab_size).to(device=devices[0])
 
@@ -142,10 +144,12 @@ class SidNet(Module):
         embedded_targets = embedded_targets.transpose(0, 1).to(device_)
 
         # FIXME are all these masks done the right way ?
-        src_mask = self.seq2seq.generate_square_subsequent_mask(
-                       len(hidden_states)).to(device_)
-        tgt_mask = self.seq2seq.generate_square_subsequent_mask(
-                       len(embedded_targets)).to(device_)
+        if self.src_mask is None or self.src_mask.shape(0) != len(hidden_states):
+            self.src_mask = self.seq2seq.generate_square_subsequent_mask(
+                                len(hidden_states)).to(device_)
+        if self.tgt_mask is None or self.tgt_mask.shape(0) != len(embedded_targets):
+            self.tgt_mask = self.seq2seq.generate_square_subsequent_mask(
+                                len(embedded_targets)).to(device_)
         # convert HuggingFace mask to PyTorch mask and manage devices
         #     HuggingFace: 1    -> NOT MASKED, 0     -> MASKED
         #     PyTorch:     True -> MASKED,     False -> NOT MASKED
@@ -153,15 +157,15 @@ class SidNet(Module):
             src_key_padding_mask = ~src_key_padding_mask.bool().to(device_)
         if tgt_key_padding_mask is not None:
             tgt_key_padding_mask = ~tgt_key_padding_mask.bool().to(device_)
+
         text_output = self.seq2seq(hidden_states, embedded_targets,
-                                   src_mask=src_mask, tgt_mask=tgt_mask,
+                                   src_mask=self.src_mask, tgt_mask=self.tgt_mask,
                                    src_key_padding_mask=src_key_padding_mask,
                                    tgt_key_padding_mask=tgt_key_padding_mask)
-        check_nan(text_output, 'seq2seq output')
         # manage devices
         device_ = next(self.linear.parameters()).device
         text_output = self.linear(text_output.to(device_))
-        check_nan(text_output, 'linear output')
+
         # reshape output like (batch_size, sequence_length)
         text_output = text_output.transpose(0, 1)
 
