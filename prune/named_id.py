@@ -15,6 +15,7 @@ from docopt import docopt
 from tqdm import tqdm
 from pathlib import Path
 import json
+import warnings
 
 from pyannote.core import Segment
 from pyannote.database import get_protocol
@@ -29,11 +30,21 @@ from torch.nn import CrossEntropyLoss
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
 
+
+# HACK ignore torch warnings about source code checking when saving model
+warnings.filterwarnings("ignore",
+                        message="Couldn't retrieve source code for container of type .*",
+                        module="torch")
+# set random seed
 np.random.seed(0)
 manual_seed(0)
-DATA_PATH = Path(PC.__file__).parent / 'data'
+
+# tokenization constants
 pad_token, pad_int = '[PAD]', 0
 max_length = 256
+
+# path to Plumcot root folder
+DATA_PATH = Path(PC.__file__).parent / 'data'
 
 
 def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3, 
