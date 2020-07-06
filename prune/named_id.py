@@ -2,12 +2,13 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> [--subset=<subset> --batch=<batch> --window=<window> --step=<step>]
+named_id.py train <protocol> [--subset=<subset> --batch=<batch> --window=<window> --step=<step> --mask]
 
 --subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test' [default: train]
 --batch=<batch>		 Batch size [default: 128]
 --window=<window>	 Window size [default: 8]
 --step=<step>		 Step size [default: 1]
+--mask                   Compute attention_mask according to max_length.
 """
 
 from docopt import docopt
@@ -71,7 +72,6 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
     """
     model = SidNet(bert, vocab_size, audio, **kwargs)
     model.freeze(freeze)
-    print(model)
     model.train()
 
     criterion = CrossEntropyLoss(ignore_index=pad_int)
@@ -106,14 +106,14 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
 
 
 def batchify(protocol, mapping, subset='train', bert='bert-base-cased',
-             batch_size=128, window_size=10, step_size=1):
+             batch_size=128, window_size=10, step_size=1, mask=True):
     """Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
     And finally, encode batch (i.e. tokenize, tensorize...)
 
     mapping is used to convert normalized speaker names into its most common name.
     Note that it's important that this name is as written in the input text.
-
+    
     Returns
     -------
     batches: List[Tuple[Tensor]]:
@@ -179,35 +179,43 @@ def batchify(protocol, mapping, subset='train', bert='bert-base-cased',
             # TODO integrate audio
             # audio_batch.append(audio_windows[j])
         # encode batch (i.e. tokenize, tensorize...)
-        batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch)
+        batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch, mask=mask)
         batches.append(batch)
     return batches, tokenizer.vocab_size
 
 
-def batch_encode_plus(tokenizer, text_batch):
+def batch_encode_plus(tokenizer, text_batch, mask=True):
     """Shortcut function to encode a text (either input or target) batch
     using tokenizer.batch_encode_plus with the appropriate parameters.
+
+    Parameters
+    ----------
+    tokenizer: BertTokenizer
+    text_batch: List[str]
+    mask: bool, optional
+        Compute attention_mask according to max_length.
+        Defaults to True.
 
     Returns
     -------
     input_ids: Tensor
         (batch_size, max_length). Encoded input tokens using BertTokenizer
     attention_mask: Tensor
-            (batch_size, max_length). Used to mask input_ids.
+        (batch_size, max_length). Used to mask input_ids.
+        None if not mask.
     """
     text_encoded_plus = tokenizer.batch_encode_plus(text_batch,
                                                     add_special_tokens=False,
                                                     max_length=max_length,
                                                     pad_to_max_length='right',
                                                     return_tensors='pt',
-                                                    return_attention_mask=True,
-                                                    return_special_tokens_mask=True)
+                                                    return_attention_mask=mask)
     input_ids = text_encoded_plus['input_ids']
-    attention_mask = text_encoded_plus['attention_mask']
+    attention_mask = text_encoded_plus['attention_mask'] if mask else None
     return input_ids, attention_mask
 
 
-def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None):
+def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, mask=True):
     """Encode input, target text and audio consistently in torch Tensor
 
     Parameters
@@ -221,6 +229,9 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None):
     audio_batch: List[Segment], optional
         (batch_size, ) Timestamps of the input text, aligned with text_batch[i].split(' ')
         Defaults to None (model only relies on the text).
+    mask: bool, optional
+        Compute attention_mask according to max_length.
+        Defaults to True.
 
     Returns
     -------
@@ -247,13 +258,14 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None):
         audio_similarity = None
 
     # encode input text
-    input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch)
+    input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch, mask=mask)
 
     # encode target text
-    target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch)
+    target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch, mask=mask)
     # fix tgt_key_padding_mask when targets where previously tagged as '[PAD]' -> 0
     # FIXME is there a better way to do this?
-    tgt_key_padding_mask[target_ids == 0] = pad_int
+    if tgt_key_padding_mask is not None:
+        tgt_key_padding_mask[target_ids == pad_int] = pad_int
 
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
@@ -266,6 +278,7 @@ if __name__ == '__main__':
     batch_size = int(args['--batch']) if args['--batch'] else 128
     window_size = int(args['--window']) if args['--window'] else 8
     step_size = int(args['--step']) if args['--step'] else 1
+    mask = args['--mask']
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
     mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
@@ -274,7 +287,8 @@ if __name__ == '__main__':
     batches, vocab_size = batchify(protocol, mapping, subset,
                                    batch_size=batch_size, 
                                    window_size=window_size, 
-                                   step_size=step_size)
+                                   step_size=step_size,
+                                   mask=mask)
 
     if args['train']:
         model, optimizer = train(batches, vocab_size=vocab_size)
