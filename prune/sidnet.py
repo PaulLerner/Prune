@@ -60,12 +60,12 @@ class SidNet(Module):
 
     def __init__(self, bert='bert-base-cased', vocab_size=28996, audio=None, **kwargs):
         super().__init__()
-        # put bert in the first device
+        # put bert and output layer in the first device
+        # and the seq2seq in the last (hopefully another) one
         self.bert = BertModel.from_pretrained(bert).to(device=devices[0])
         self.hidden_size = self.bert.config.hidden_size
-        # and the rest on the last device (hopefully another one)
         self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=devices[-1])
-        self.linear = Linear(self.hidden_size, vocab_size).to(device=devices[-1])
+        self.linear = Linear(self.hidden_size, vocab_size).to(device=devices[0])
 
     def freeze(self, names: List[str]):
         """Freeze parts of the model
@@ -157,8 +157,13 @@ class SidNet(Module):
                                    src_mask=src_mask, tgt_mask=tgt_mask,
                                    src_key_padding_mask=src_key_padding_mask,
                                    tgt_key_padding_mask=tgt_key_padding_mask)
-
-        text_output = self.linear(text_output)
+        check_nan(text_output, 'seq2seq output')
+        # manage devices
+        device_ = next(self.linear.parameters()).device
+        text_output = self.linear(text_output.to(device_))
+        check_nan(text_output, 'linear output')
+        # reshape output like (batch_size, sequence_length)
+        text_output = text_output.transpose(0, 1)
 
         # TODO weigh output using audio_similarity here
         if audio_similarity is not None:
