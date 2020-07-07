@@ -102,6 +102,11 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
             # forward pass
             output = model(input_ids, target_ids, audio_similarity,
                            src_key_padding_mask, tgt_key_padding_mask)
+            # reshape output like (batch_size x sequence_length, vocab_size)
+            # and target_ids like (batch_size x sequence_length)
+            # and manage devices
+            output = output.reshape(-1, vocab_size)
+            target_ids = target_ids.reshape(-1).to(output.device)
 
             # calculate loss
             loss = criterion(output, target_ids)
