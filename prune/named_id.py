@@ -87,7 +87,7 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
     model.freeze(freeze)
     model.train()
 
-    criterion = CrossEntropyLoss(ignore_index=PAD_ID)
+    criterion = NLLLoss(ignore_index=PAD_ID)
     optimizer = Adam(model.parameters(), lr=lr)
 
     tb = SummaryWriter(TIMESTAMP)
@@ -105,7 +105,7 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
             # reshape output like (batch_size x sequence_length, vocab_size)
             # and target_ids like (batch_size x sequence_length)
             # and manage devices
-            output = output.reshape(-1, vocab_size)
+            output = output.reshape(-1, model.vocab_size)
             target_ids = target_ids.reshape(-1).to(output.device)
 
             # calculate loss

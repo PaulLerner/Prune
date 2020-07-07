@@ -6,7 +6,7 @@ from typing import List
 import numpy as np
 
 from transformers import BertModel
-from torch.nn import Transformer, Module, Linear
+from torch.nn import Transformer, Module, Linear, LogSoftmax
 from torch.cuda import device_count
 from torch import device
 
@@ -64,10 +64,12 @@ class SidNet(Module):
         # and the seq2seq in the last (hopefully another) one
         self.bert = BertModel.from_pretrained(bert).to(device=DEVICES[0])
         self.hidden_size = self.bert.config.hidden_size
+        self.vocab_size = vocab_size
         self.src_mask = None
         self.tgt_mask = None
         self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=DEVICES[-1])
-        self.linear = Linear(self.hidden_size, vocab_size).to(device=DEVICES[0])
+        self.linear = Linear(self.hidden_size, self.vocab_size).to(device=DEVICES[0])
+        self.activation = LogSoftmax(dim=2)
 
     def freeze(self, names: List[str]):
         """Freeze parts of the model
@@ -166,13 +168,14 @@ class SidNet(Module):
         device_ = next(self.linear.parameters()).device
         text_output = self.linear(text_output.to(device_))
 
-        # reshape output like (batch_size, sequence_length)
+        # reshape output like (batch_size, sequence_length, vocab_size)
         text_output = text_output.transpose(0, 1)
 
         # TODO weigh output using audio_similarity here
         if audio_similarity is not None:
             audio_similarity = audio_similarity.to(device_)
 
-        output = text_output
+        # activate with LogSoftmax
+        output = self.activation(text_output)
         return output
 
