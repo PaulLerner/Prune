@@ -37,7 +37,7 @@ import numpy as np
 from torch import save, load, manual_seed, no_grad, argmax, prod
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
-from torch.nn import CrossEntropyLoss
+from torch.nn import NLLLoss
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
 
