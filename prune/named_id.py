@@ -2,13 +2,24 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> [--subset=<subset> --batch=<batch> --window=<window> --step=<step> --mask]
+named_id.py train <protocol> [options]
+named_id.py validate <protocol> <train_dir> [options]
+named_id.py test <protocol> <validate_dir> [options]
+
+File structure should look like:
+<train_dir>
+└───weights
+│   └───*.pt
+│   <validate_dir>
+│   └───<test_dir>
+
+Common options:
 
 --subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test' [default: train]
 --batch=<batch>		 Batch size [default: 128]
 --window=<window>	 Window size [default: 8]
 --step=<step>		 Step size [default: 1]
---mask                   Compute attention_mask according to max_length.
+--mask               Compute attention_mask according to max_length.
 """
 
 from docopt import docopt
@@ -23,13 +34,12 @@ import Plumcot as PC
 
 import numpy as np
 
-from torch import save, manual_seed
+from torch import save, load, manual_seed, no_grad, argmax, prod
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
 from torch.nn import CrossEntropyLoss
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
-from prune.utils import TIMESTAMP
 
 
 # HACK ignore torch warnings about source code checking when saving model
@@ -46,24 +56,84 @@ max_length = 256
 
 # constant paths
 DATA_PATH = Path(PC.__file__).parent / 'data'
-WEIGHTS_PATH = Path(TIMESTAMP, 'weights')
 
 
-def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3, 
-          epochs=100, freeze=['bert'], save_every=1, **kwargs):
-    """Train the model for `epochs` epochs
+def eval(batches, model, validate_dir, test=False):
+    """Load model from checkpoint and evaluate it on batches.
+    When testing, only the best model should be tested.
 
     Parameters
     ----------
     batches: List[Tuple[Tensor]]:
         (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
-    bert: `str`, optional
-        Model name or path, see BertTokenizer.from_pretrained
-        Defaults to 'bert-base-cased'.
-    vocab_size: `int`, optional
-        Output dimension of the model (should be inferred from vocab_size of BertTokenizer)
-        Defaults to 28996
+    model: SidNet
+        instance of SidNet, ready to be loaded
+    validate_dir: Path
+        Path to log validation accuracy and load model weights (from ../weights)
+        Defaults to current working directory.
+    test: bool, optional
+        Whether to test only the best model.
+        Defaults to False.
+    """
+    if test:
+        raise NotImplementedError('test')
+    weights_path = validate_dir.parent / 'weights'
+    if not weights_path.exists():
+        raise ValueError(f'Weights path "{weights_path}" does not exist.')
+
+    criterion = NLLLoss(ignore_index=PAD_ID)
+    tb = SummaryWriter(validate_dir)
+    for epoch, weight in tqdm(enumerate(sorted(weights_path.iterdir())), desc='Evaluating'):
+        checkpoint = load(weight)
+        assert epoch == checkpoint["epoch"]
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+        with no_grad():
+            epoch_loss, epoch_acc = 0., 0.
+            for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+                # forward pass
+                output = model(input_ids, target_ids, audio_similarity,
+                               src_key_padding_mask, tgt_key_padding_mask)
+
+                # compute batch-token accuracy
+                # get model prediction per token
+                predictions = argmax(output, dim=2)
+                # ignore padded targets
+                indices = target_ids != PAD_ID
+                batch_acc = predictions[indices] == target_ids[indices] / prod(indices.shape)
+                epoch_acc += batch_acc
+
+                # TODO decode and compute word accuracy
+                # TODO fuse batch output at the document level and compute accuracy
+
+                # compute loss
+                #   reshape output like (batch_size x sequence_length, vocab_size)
+                #   and target_ids like (batch_size x sequence_length)
+                #   and manage devices
+                output = output.reshape(-1, vocab_size)
+                target_ids = target_ids.reshape(-1).to(output.device)
+                loss = criterion(output, target_ids)
+                epoch_loss += loss.item()
+
+            tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
+            tb.add_scalar('Accuracy/eval/batch/token', epoch_acc / len(batches), epoch)
+
+
+def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
+          epochs=100, freeze=['bert'], save_every=1):
+    """Train the model for `epochs` epochs
+
+    Parameters
+    ----------
+    batches: List[Tuple[Tensor]]
+        (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        see batch_encode_multi
+    model: SidNet
+        instance of SidNet, ready to be trained
+    train_dir: Path, optional
+        Path to log training loss and save model weights (under experiment_path/weights)
+        Defaults to current working directory.
     audio: `Wrappable`, optional
         Describes how raw speaker embeddings should be obtained.
         See pyannote.audio.features.wrapper.Wrapper documentation for details.
@@ -80,17 +150,18 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
     save_every: int, optional
         Save model weights and optimizer state every `save_every` epoch.
         Defaults to save at every epoch (1)
-    **kwargs:
-        Additional arguments are passed to the model Transformer
     """
-    model = SidNet(bert, vocab_size, audio, **kwargs)
+    # be careful not to erase previous weights
+    weights_path = train_dir / 'weights'
+    weights_path.mkdir(exist_ok=False)
+
     model.freeze(freeze)
     model.train()
 
     criterion = NLLLoss(ignore_index=PAD_ID)
     optimizer = Adam(model.parameters(), lr=lr)
 
-    tb = SummaryWriter(TIMESTAMP)
+    tb = SummaryWriter(train_dir)
     for epoch in tqdm(range(epochs), desc='Training'):
         # shuffle batches
         np.random.shuffle(batches)
@@ -301,6 +372,7 @@ if __name__ == '__main__':
     serie, _, _ = protocol_name.split('.')
     mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
 
+
     # get batches from protocol subset
     batches, vocab_size = batchify(protocol, mapping, subset,
                                    batch_size=batch_size, 
@@ -308,7 +380,20 @@ if __name__ == '__main__':
                                    step_size=step_size,
                                    mask=mask)
 
+    # instantiate model
+    model = SidNet('bert-base-cased', vocab_size, audio=None)
+
     if args['train']:
-        model, optimizer = train(batches, vocab_size=vocab_size)
+        train_dir = Path(f'{protocol_name}.{subset}')
+        train_dir.mkdir(exist_ok=True)
+        model, optimizer = train(batches, model, train_dir)
+    elif args['validate']:
+        validate_dir = Path(args['<train_dir>'], f'{protocol_name}.{subset}')
+        validate_dir.mkdir(exist_ok=True)
+        eval(batches, model, validate_dir, test=False)
+    elif args['test']:
+        test_dir = Path(args['<validate_dir>'], f'{protocol_name}.{subset}')
+        test_dir.mkdir(exist_ok=True)
+        eval(batches, model, test_dir, test=True)
 
 
