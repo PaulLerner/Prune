@@ -42,10 +42,6 @@ from transformers import BertTokenizer
 from prune.sidnet import SidNet
 
 
-# HACK ignore torch warnings about source code checking when saving model
-warnings.filterwarnings("ignore",
-                        message="Couldn't retrieve source code for container of type .*",
-                        module="torch")
 # set random seed
 np.random.seed(0)
 manual_seed(0)
@@ -188,8 +184,12 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
         tb.add_scalar('Loss/train', epoch_loss/len(batches), epoch)
 
         if epoch % save_every == 0:
-            save(model, WEIGHTS_PATH / f'{model.__class__.__name__}.{epoch:04d}.pt')
-            save(optimizer,  WEIGHTS_PATH / f'{optimizer.__class__.__name__}.{epoch:04d}.pt')
+            save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': epoch_loss
+            }, f'{epoch:04d}.tar')
 
     return model, optimizer
 
