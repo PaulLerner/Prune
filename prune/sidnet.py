@@ -146,10 +146,10 @@ class SidNet(Module):
         embedded_targets = embedded_targets.transpose(0, 1).to(device_)
 
         # FIXME are all these masks done the right way ?
-        if self.src_mask is None or self.src_mask.shape(0) != len(hidden_states):
+        if self.src_mask is None or self.src_mask.shape[0] != len(hidden_states):
             self.src_mask = self.seq2seq.generate_square_subsequent_mask(
                                 len(hidden_states)).to(device_)
-        if self.tgt_mask is None or self.tgt_mask.shape(0) != len(embedded_targets):
+        if self.tgt_mask is None or self.tgt_mask.shape[0] != len(embedded_targets):
             self.tgt_mask = self.seq2seq.generate_square_subsequent_mask(
                                 len(embedded_targets)).to(device_)
         # convert HuggingFace mask to PyTorch mask and manage devices
