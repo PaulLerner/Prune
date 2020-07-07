@@ -162,9 +162,9 @@ def batchify(protocol, mapping, subset='train', bert='bert-base-cased',
             if token._.confidence > 0.5 and '#unknown#' not in token._.speaker:
                 audio.append(Segment(token._.time_start, token._.time_end))
             else:
-                audio.append(pad_token)
+                audio.append(PAD_TOKEN)
             # if we don't have a proper target we should mask the loss function
-            targets.append(mapping.get(token._.speaker, pad_token))
+            targets.append(mapping.get(token._.speaker, PAD_TOKEN))
             previous_speaker = token._.speaker
             end += 1
         windows.pop(0)
@@ -276,7 +276,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
     # fix tgt_key_padding_mask when targets where previously tagged as '[PAD]' -> 0
     # FIXME is there a better way to do this?
     if tgt_key_padding_mask is not None:
-        tgt_key_padding_mask[target_ids == pad_int] = pad_int
+        tgt_key_padding_mask[target_ids == PAD_ID] = PAD_ID
 
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
