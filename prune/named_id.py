@@ -9,7 +9,7 @@ named_id.py test <protocol> <validate_dir> [options]
 File structure should look like:
 <train_dir>
 └───weights
-│   └───*.pt
+│   └───*.tar
 │   <validate_dir>
 │   └───<test_dir>
 
@@ -189,7 +189,7 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': epoch_loss
-            }, f'{epoch:04d}.tar')
+            }, weights_path / f'{epoch:04d}.tar')
 
     return model, optimizer
 
