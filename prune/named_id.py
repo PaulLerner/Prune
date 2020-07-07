@@ -29,6 +29,7 @@ from torch.optim import Adam
 from torch.nn import CrossEntropyLoss
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
+from prune.utils import TIMESTAMP
 
 
 # HACK ignore torch warnings about source code checking when saving model
@@ -43,8 +44,9 @@ manual_seed(0)
 PAD_TOKEN, PAD_ID = '[PAD]', 0
 max_length = 256
 
-# path to Plumcot root folder
+# constant paths
 DATA_PATH = Path(PC.__file__).parent / 'data'
+WEIGHTS_PATH = Path(TIMESTAMP, 'weights')
 
 
 def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3, 
@@ -88,7 +90,7 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
     criterion = CrossEntropyLoss(ignore_index=PAD_ID)
     optimizer = Adam(model.parameters(), lr=lr)
 
-    tb = SummaryWriter()
+    tb = SummaryWriter(TIMESTAMP)
     for epoch in tqdm(range(epochs), desc='Training'):
         # shuffle batches
         np.random.shuffle(batches)
@@ -110,8 +112,8 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
         tb.add_scalar('Loss/train', epoch_loss/len(batches), epoch)
 
         if epoch % save_every == 0:
-            save(model, f'weights/{model.__class__.__name__}.{epoch:04d}.pt')
-            save(optimizer, f'weights/{optimizer.__class__.__name__}.{epoch:04d}.pt')
+            save(model, WEIGHTS_PATH / f'{model.__class__.__name__}.{epoch:04d}.pt')
+            save(optimizer,  WEIGHTS_PATH / f'{optimizer.__class__.__name__}.{epoch:04d}.pt')
 
     return model, optimizer
 
