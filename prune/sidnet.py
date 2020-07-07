@@ -3,12 +3,10 @@
 
 from typing import List
 
-import numpy as np
-
 from transformers import BertModel
 from torch.nn import Transformer, Module, Linear, LogSoftmax
 from torch.cuda import device_count
-from torch import device
+from torch import device, prod
 
 
 DEVICES = [device('cpu')] if device_count() == 0 else \
@@ -19,7 +17,7 @@ def total_params(module):
     """Beware to freeze the relevant parameters before computing this."""
     trainable, total = 0, 0
     for param in module.parameters():
-        size = np.prod(param.size())
+        size = prod(param.size())
         total += size
         if param.requires_grad:
             trainable += size
