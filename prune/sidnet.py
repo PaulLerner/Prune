@@ -11,7 +11,7 @@ from torch.cuda import device_count
 from torch import device
 
 
-devices = [device('cpu')] if device_count() == 0 else \
+DEVICES = [device('cpu')] if device_count() == 0 else \
           [device(f"cuda:{i}") for i in range(device_count())]
 
 
@@ -62,12 +62,12 @@ class SidNet(Module):
         super().__init__()
         # put bert and output layer in the first device
         # and the seq2seq in the last (hopefully another) one
-        self.bert = BertModel.from_pretrained(bert).to(device=devices[0])
+        self.bert = BertModel.from_pretrained(bert).to(device=DEVICES[0])
         self.hidden_size = self.bert.config.hidden_size
         self.src_mask = None
         self.tgt_mask = None
-        self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=devices[-1])
-        self.linear = Linear(self.hidden_size, vocab_size).to(device=devices[0])
+        self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=DEVICES[-1])
+        self.linear = Linear(self.hidden_size, vocab_size).to(device=DEVICES[0])
 
     def freeze(self, names: List[str]):
         """Freeze parts of the model

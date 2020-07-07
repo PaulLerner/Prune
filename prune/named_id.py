@@ -40,7 +40,7 @@ np.random.seed(0)
 manual_seed(0)
 
 # tokenization constants
-pad_token, pad_int = '[PAD]', 0
+PAD_TOKEN, PAD_ID = '[PAD]', 0
 max_length = 256
 
 # path to Plumcot root folder
@@ -85,7 +85,7 @@ def train(batches, bert='bert-base-cased', vocab_size=28996, audio=None, lr=1e-3
     model.freeze(freeze)
     model.train()
 
-    criterion = CrossEntropyLoss(ignore_index=pad_int)
+    criterion = CrossEntropyLoss(ignore_index=PAD_ID)
     optimizer = Adam(model.parameters(), lr=lr)
 
     tb = SummaryWriter()
