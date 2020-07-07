@@ -24,7 +24,6 @@ stats options:
 import os
 from pathlib import Path
 import json
-from datetime import datetime
 
 from docopt import docopt
 import matplotlib.pyplot as plt
@@ -47,6 +46,7 @@ import Plumcot as PC
 
 from prune.convert import *
 from prune.features import *
+from prune.utils import TIMESTAMP
 
 DATA_PATH = Path(PC.__file__).parent / "data"
 
@@ -86,8 +86,7 @@ def update_distances(args):
             break
     distances_per_speaker = get_distances_per_speaker(features, hypothesis)
     gecko_json = annotation_to_GeckoJSON(hypothesis, distances_per_speaker, colors)
-    time = datetime.today().strftime('%Y%m%d-%H%M%S')
-    name = f"{json_path.stem}.{time}.json"
+    name = f"{json_path.stem}.{TIMESTAMP}.json"
     updated_path = Path(json_path.parent, name)
     with open(updated_path, 'w') as file:
         json.dump(gecko_json, file)
