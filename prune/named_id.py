@@ -91,6 +91,8 @@ def eval(batches, model, validate_dir, test=False):
                 # forward pass
                 output = model(input_ids, target_ids, audio_similarity,
                                src_key_padding_mask, tgt_key_padding_mask)
+                # manage devices
+                target_ids = target_ids.to(output.device)
 
                 # compute batch-token accuracy
                 # get model prediction per token
@@ -106,9 +108,8 @@ def eval(batches, model, validate_dir, test=False):
                 # compute loss
                 #   reshape output like (batch_size x sequence_length, vocab_size)
                 #   and target_ids like (batch_size x sequence_length)
-                #   and manage devices
                 output = output.reshape(-1, vocab_size)
-                target_ids = target_ids.reshape(-1).to(output.device)
+                target_ids = target_ids.reshape(-1)
                 loss = criterion(output, target_ids)
                 epoch_loss += loss.item()
 
