@@ -80,9 +80,9 @@ def eval(batches, model, validate_dir, test=False):
 
     criterion = NLLLoss(ignore_index=PAD_ID)
     tb = SummaryWriter(validate_dir)
-    for epoch, weight in tqdm(enumerate(sorted(weights_path.iterdir())), desc='Evaluating'):
+    for weight in tqdm(sorted(weights_path.iterdir()), desc='Evaluating'):
         checkpoint = load(weight)
-        assert epoch == checkpoint["epoch"]
+        epoch = checkpoint["epoch"]
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         with no_grad():
