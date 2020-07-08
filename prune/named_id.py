@@ -99,8 +99,9 @@ def eval(batches, model, validate_dir, test=False):
                 predictions = argmax(output, dim=2)
                 # ignore padded targets
                 indices = target_ids != PAD_ID
-                batch_acc = predictions[indices] == target_ids[indices] / np.prod(indices.shape)
-                epoch_acc += batch_acc
+                batch_acc = (predictions[indices] == target_ids[indices]).nonzero().shape[0]
+                batch_acc /= np.prod(indices.shape)
+                epoch_acc += batch_acc.item()
 
                 # TODO decode and compute word accuracy
                 # TODO fuse batch output at the document level and compute accuracy
