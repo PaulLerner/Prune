@@ -3,7 +3,7 @@
 
 """Usage:
 named_id.py train <protocol> [options]
-named_id.py validate <protocol> <train_dir> [options]
+named_id.py validate <protocol> <train_dir> [options] [--evergreen]
 named_id.py test <protocol> <validate_dir> [options]
 
 File structure should look like:
@@ -20,6 +20,9 @@ Common options:
 --window=<window>	 Window size [default: 8]
 --step=<step>		 Step size [default: 1]
 --mask               Compute attention_mask according to max_length.
+
+Validation options:
+--evergreen          Start with the latest checkpoints
 """
 
 from docopt import docopt
@@ -68,7 +71,7 @@ def batch_accuracy(targets, predictions, pad=PAD_ID):
     return batch_acc
 
 
-def eval(batches, model, tokenizer, validate_dir, test=False):
+def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
     """Load model from checkpoint and evaluate it on batches.
     When testing, only the best model should be tested.
 
@@ -87,6 +90,9 @@ def eval(batches, model, tokenizer, validate_dir, test=False):
     test: bool, optional
         Whether to test only the best model.
         Defaults to False.
+    evergreen: bool, optional
+        Whether to start validation with the latest checkpoints.
+        Defaults to False.
     """
     if test:
         raise NotImplementedError('test')
@@ -96,7 +102,8 @@ def eval(batches, model, tokenizer, validate_dir, test=False):
 
     criterion = NLLLoss(ignore_index=PAD_ID)
     tb = SummaryWriter(validate_dir)
-    for weight in tqdm(sorted(weights_path.iterdir()), desc='Evaluating'):
+    weights = sorted(weights_path.iterdir(), reverse=evergreen)
+    for weight in tqdm(weights, desc='Evaluating'):
         checkpoint = load(weight)
         epoch = checkpoint["epoch"]
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -417,9 +424,10 @@ if __name__ == '__main__':
         train_dir.mkdir(exist_ok=True)
         model, optimizer = train(batches, model, train_dir)
     elif args['validate']:
+        evergreen = args['--evergreen']
         validate_dir = Path(args['<train_dir>'], f'{protocol_name}.{subset}')
         validate_dir.mkdir(exist_ok=True)
-        eval(batches, model, tokenizer, validate_dir, test=False)
+        eval(batches, model, tokenizer, validate_dir, test=False, evergreen=evergreen)
     elif args['test']:
         test_dir = Path(args['<validate_dir>'], f'{protocol_name}.{subset}')
         test_dir.mkdir(exist_ok=True)
