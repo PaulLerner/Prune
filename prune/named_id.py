@@ -34,7 +34,7 @@ import Plumcot as PC
 
 import numpy as np
 
-from torch import save, load, manual_seed, no_grad, argmax, prod
+from torch import save, load, manual_seed, no_grad, argmax
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
 from torch.nn import NLLLoss
@@ -97,7 +97,7 @@ def eval(batches, model, validate_dir, test=False):
                 predictions = argmax(output, dim=2)
                 # ignore padded targets
                 indices = target_ids != PAD_ID
-                batch_acc = predictions[indices] == target_ids[indices] / prod(indices.shape)
+                batch_acc = predictions[indices] == target_ids[indices] / np.prod(indices.shape)
                 epoch_acc += batch_acc
 
                 # TODO decode and compute word accuracy
