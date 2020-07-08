@@ -37,7 +37,7 @@ import Plumcot as PC
 
 import numpy as np
 
-from torch import save, load, manual_seed, no_grad, argmax
+from torch import save, load, manual_seed, no_grad, argmax, Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
 from torch.nn import NLLLoss
@@ -65,8 +65,15 @@ def batch_accuracy(targets, predictions, pad=PAD_ID):
     """
 
     indices = targets != pad
-    batch_acc = (predictions[indices] == targets[indices]).nonzero().shape[0]
-    batch_acc /= np.prod(indices.shape)
+    where = predictions[indices] == targets[indices]
+
+    # switch between torch and np
+    if isinstance(where, Tensor):
+        where = where.nonzero(as_tuple=True)
+    else:
+        where = where.nonzero()
+
+    batch_acc = where[0].shape[0] / np.prod(indices.shape)
 
     return batch_acc
 
