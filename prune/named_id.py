@@ -126,7 +126,7 @@ def eval(batches, model, tokenizer, validate_dir, test=False):
                 # compute loss
                 #   reshape output like (batch_size x sequence_length, vocab_size)
                 #   and target_ids like (batch_size x sequence_length)
-                output = output.reshape(-1, vocab_size)
+                output = output.reshape(-1, model.vocab_size)
                 target_ids = target_ids.reshape(-1)
                 loss = criterion(output, target_ids)
                 epoch_loss += loss.item()
