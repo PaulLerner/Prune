@@ -47,6 +47,7 @@ np.random.seed(0)
 manual_seed(0)
 
 # tokenization constants
+BERT = 'bert-base-cased'
 PAD_TOKEN, PAD_ID = '[PAD]', 0
 max_length = 256
 
@@ -54,7 +55,20 @@ max_length = 256
 DATA_PATH = Path(PC.__file__).parent / 'data'
 
 
-def eval(batches, model, validate_dir, test=False):
+def batch_accuracy(targets, predictions, pad=PAD_ID):
+    """Compute accuracy at the batch level.
+    Should work the same with torch and np.
+    Ignores padded targets.
+    """
+
+    indices = targets != pad
+    batch_acc = (predictions[indices] == targets[indices]).nonzero().shape[0]
+    batch_acc /= np.prod(indices.shape)
+
+    return batch_acc
+
+
+def eval(batches, model, tokenizer, validate_dir, test=False):
     """Load model from checkpoint and evaluate it on batches.
     When testing, only the best model should be tested.
 
@@ -65,6 +79,8 @@ def eval(batches, model, validate_dir, test=False):
         see batch_encode_multi
     model: SidNet
         instance of SidNet, ready to be loaded
+    tokenizer: BertTokenizer
+        used to decode output (i.e. de-tensorize, de-tokenize)
     validate_dir: Path
         Path to log validation accuracy and load model weights (from ../weights)
         Defaults to current working directory.
@@ -86,7 +102,7 @@ def eval(batches, model, validate_dir, test=False):
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         with no_grad():
-            epoch_loss, epoch_acc = 0., 0.
+            epoch_loss, epoch_token_acc, epoch_word_acc = 0., 0., 0.
             for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass
                 output = model(input_ids, target_ids, audio_similarity,
@@ -94,16 +110,17 @@ def eval(batches, model, validate_dir, test=False):
                 # manage devices
                 target_ids = target_ids.to(output.device)
 
-                # compute batch-token accuracy
                 # get model prediction per token
                 predictions = argmax(output, dim=2)
-                # ignore padded targets
-                indices = target_ids != PAD_ID
-                batch_acc = (predictions[indices] == target_ids[indices]).nonzero().shape[0]
-                batch_acc /= np.prod(indices.shape)
-                epoch_acc += batch_acc.item()
 
-                # TODO decode and compute word accuracy
+                # compute batch-token accuracy
+                epoch_token_acc += batch_accuracy(target_ids, predictions, PAD_ID)
+
+                # decode and compute word accuracy
+                decoded_targets = batch2numpy(tokenizer, target_ids)
+                decoded_predictions = batch2numpy(tokenizer, predictions)
+                epoch_word_acc += batch_accuracy(decoded_targets, decoded_predictions, PAD_TOKEN)
+
                 # TODO fuse batch output at the document level and compute accuracy
 
                 # compute loss
@@ -115,7 +132,8 @@ def eval(batches, model, validate_dir, test=False):
                 epoch_loss += loss.item()
 
             tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
-            tb.add_scalar('Accuracy/eval/batch/token', epoch_acc / len(batches), epoch)
+            tb.add_scalar('Accuracy/eval/batch/token', epoch_token_acc / len(batches), epoch)
+            tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc / len(batches), epoch)
 
 
 def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
@@ -196,7 +214,17 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
     return model, optimizer
 
 
-def batchify(protocol, mapping, subset='train', bert='bert-base-cased',
+def batch2numpy(tokenizer, batch):
+    """Decode batch to list of string using tokenizer
+    then reshape the list of str to a np array of tokens"""
+
+    decoded = tokenizer.batch_decode(batch)
+    decoded = [line.split() for line in decoded]
+
+    return np.array(decoded, dtype=str)
+
+
+def batchify(tokenizer, protocol, mapping, subset='train',
              batch_size=128, window_size=10, step_size=1, mask=True):
     """Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
@@ -210,14 +238,11 @@ def batchify(protocol, mapping, subset='train', bert='bert-base-cased',
     batches: List[Tuple[Tensor]]:
         (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
-    vocab_size: int
-        tokenizer.vocab_size
     """
 
     with open(mapping) as file:
         mapping = json.load(file)
 
-    tokenizer = BertTokenizer.from_pretrained(bert)
     batches = []
     text_windows, audio_windows, target_windows = [], [], []
 
@@ -272,7 +297,7 @@ def batchify(protocol, mapping, subset='train', bert='bert-base-cased',
         # encode batch (i.e. tokenize, tensorize...)
         batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch, mask=mask)
         batches.append(batch)
-    return batches, tokenizer.vocab_size
+    return batches
 
 
 def batch_encode_plus(tokenizer, text_batch, mask=True):
@@ -374,16 +399,18 @@ if __name__ == '__main__':
     serie, _, _ = protocol_name.split('.')
     mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
 
+    # instantiate tokenizer
+    tokenizer = BertTokenizer.from_pretrained(BERT)
 
     # get batches from protocol subset
-    batches, vocab_size = batchify(protocol, mapping, subset,
-                                   batch_size=batch_size, 
-                                   window_size=window_size, 
-                                   step_size=step_size,
-                                   mask=mask)
+    batches = batchify(tokenizer, protocol, mapping, subset,
+                       batch_size=batch_size,
+                       window_size=window_size,
+                       step_size=step_size,
+                       mask=mask)
 
     # instantiate model
-    model = SidNet('bert-base-cased', vocab_size, audio=None)
+    model = SidNet(BERT, tokenizer.vocab_size, audio=None)
 
     if args['train']:
         train_dir = Path(f'{protocol_name}.{subset}')
@@ -392,10 +419,10 @@ if __name__ == '__main__':
     elif args['validate']:
         validate_dir = Path(args['<train_dir>'], f'{protocol_name}.{subset}')
         validate_dir.mkdir(exist_ok=True)
-        eval(batches, model, validate_dir, test=False)
+        eval(batches, model, tokenizer, validate_dir, test=False)
     elif args['test']:
         test_dir = Path(args['<validate_dir>'], f'{protocol_name}.{subset}')
         test_dir.mkdir(exist_ok=True)
-        eval(batches, model, test_dir, test=True)
+        eval(batches, model, tokenizer, test_dir, test=True)
 
 
