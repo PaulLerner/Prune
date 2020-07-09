@@ -21,7 +21,8 @@ Common options:
 --batch=<batch>		 Batch size [default: 128]
 --window=<window>	 Window size [default: 8]
 --step=<step>		 Step size [default: 1]
---mask               Compute attention_mask according to max_length.
+--max_len=<max_len>	 Maximum # of tokens input to BERT. Maximum 512 [default: 256]
+--mask               Compute attention_mask according to max_len.
 
 Validation options:
 --evergreen          Start with the latest checkpoints
@@ -55,7 +56,6 @@ manual_seed(0)
 # tokenization constants
 BERT = 'bert-base-cased'
 PAD_TOKEN, PAD_ID = '[PAD]', 0
-max_length = 256
 
 # constant paths
 DATA_PATH = Path(PC.__file__).parent / 'data'
@@ -416,6 +416,7 @@ if __name__ == '__main__':
     batch_size = int(args['--batch']) if args['--batch'] else 128
     window_size = int(args['--window']) if args['--window'] else 8
     step_size = int(args['--step']) if args['--step'] else 1
+    max_length = int(args['--max_len']) if args['--max_len'] else 256
     mask = args['--mask']
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
