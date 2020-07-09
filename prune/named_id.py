@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> <experiment_dir> [options]
+named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen]
 named_id.py test <protocol> <validate_dir> [options]
 
@@ -14,6 +14,9 @@ Common options:
 --step=<step>		 Step size [default: 1]
 --max_len=<max_len>	 Maximum # of tokens input to BERT. Maximum 512 [default: 256]
 --mask               Compute attention_mask according to max_len.
+
+Training options:
+--from=<epoch>       Start training back from a specific checkpoint (epoch #)
 
 Validation options:
 --evergreen          Start with the latest checkpoints
@@ -64,6 +67,8 @@ from prune.sidnet import SidNet
 # set random seed
 np.random.seed(0)
 manual_seed(0)
+
+EPOCH_FORMAT = '{:04d}.tar'
 
 # tokenization constants
 BERT = 'bert-base-cased'
@@ -166,7 +171,7 @@ def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
 
 
 def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
-          epochs=100, freeze=['bert'], save_every=1):
+          epochs=100, freeze=['bert'], save_every=1, start_epoch=None):
     """Train the model for `epochs` epochs
 
     Parameters
@@ -195,19 +200,35 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
     save_every: int, optional
         Save model weights and optimizer state every `save_every` epoch.
         Defaults to save at every epoch (1)
+    start_epoch: int, optional
+        Starts training back at start_epoch.
+        Defaults to raise an error if training in an existing directory
     """
-    # be careful not to erase previous weights
+    optimizer = Adam(model.parameters(), lr=lr)
+
     weights_path = train_dir / 'weights'
-    weights_path.mkdir(exist_ok=False)
+    # load previous checkpoint
+    if start_epoch is not None:
+        checkpoint = load(weights_path / EPOCH_FORMAT.format(start_epoch))
+        assert start_epoch == checkpoint["epoch"]
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        # increment epoch
+        start_epoch += 1
+    else:
+        # be careful not to erase previous weights
+        weights_path.mkdir(exist_ok=False)
+        # defaults to start from 0
+        start_epoch = 0
 
     model.freeze(freeze)
     model.train()
 
     criterion = NLLLoss(ignore_index=PAD_ID)
-    optimizer = Adam(model.parameters(), lr=lr)
 
     tb = SummaryWriter(train_dir)
-    for epoch in tqdm(range(epochs), desc='Training'):
+    for epoch in tqdm(range(start_epoch, epochs+start_epoch), desc='Training'):
         # shuffle batches
         np.random.shuffle(batches)
 
@@ -238,7 +259,7 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': epoch_loss
-            }, weights_path / f'{epoch:04d}.tar')
+            }, weights_path / EPOCH_FORMAT.format(epoch))
 
     return model, optimizer
 
@@ -451,13 +472,16 @@ if __name__ == '__main__':
                        mask=mask)
 
     if args['train']:
+        start_epoch = int(args['--from']) if args['--from'] else None
         train_dir = Path(args['<experiment_dir>'], full_name)
         train_dir.mkdir(exist_ok=True)
         with open(train_dir.parents[0]/'config.yml') as file:
             config = yaml.load(file, Loader=yaml.SafeLoader)
 
         model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
-        model, optimizer = train(batches, model, train_dir, **config.get('training', {}))
+        model, optimizer = train(batches, model, train_dir,
+                                 start_epoch=start_epoch,
+                                 **config.get('training', {}))
 
     elif args['validate']:
         evergreen = args['--evergreen']
