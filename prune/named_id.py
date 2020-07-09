@@ -141,8 +141,8 @@ def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
                 # TODO fuse batch output at the document level and compute accuracy
 
                 # compute loss
-                #   reshape output like (batch_size x sequence_length, vocab_size)
-                #   and target_ids like (batch_size x sequence_length)
+                #   reshape output like (batch_size * sequence_length, vocab_size)
+                #   and target_ids like (batch_size * sequence_length)
                 output = output.reshape(-1, model.vocab_size)
                 target_ids = target_ids.reshape(-1)
                 loss = criterion(output, target_ids)
@@ -206,8 +206,8 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
             # forward pass
             output = model(input_ids, target_ids, audio_similarity,
                            src_key_padding_mask, tgt_key_padding_mask)
-            # reshape output like (batch_size x sequence_length, vocab_size)
-            # and target_ids like (batch_size x sequence_length)
+            # reshape output like (batch_size * sequence_length, vocab_size)
+            # and target_ids like (batch_size * sequence_length)
             # and manage devices
             output = output.reshape(-1, model.vocab_size)
             target_ids = target_ids.reshape(-1).to(output.device)
