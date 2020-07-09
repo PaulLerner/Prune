@@ -456,8 +456,8 @@ if __name__ == '__main__':
         with open(train_dir.parents[0]/'config.yml') as file:
             config = yaml.load(file, Loader=yaml.SafeLoader)
 
-        model = SidNet(BERT, tokenizer.vocab_size, **config['architecture'])
-        model, optimizer = train(batches, model, train_dir, **config['training'])
+        model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
+        model, optimizer = train(batches, model, train_dir, **config.get('training', {}))
 
     elif args['validate']:
         evergreen = args['--evergreen']
@@ -465,7 +465,7 @@ if __name__ == '__main__':
         validate_dir.mkdir(exist_ok=True)
         config = load_config(validate_dir.parents[1])
 
-        model = SidNet(BERT, tokenizer.vocab_size, **config['architecture'])
+        model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
         eval(batches, model, tokenizer, validate_dir, test=False, evergreen=evergreen)
 
     elif args['test']:
@@ -473,7 +473,7 @@ if __name__ == '__main__':
         test_dir.mkdir(exist_ok=True)
         config = load_config(test_dir.parents[2])
 
-        model = SidNet(BERT, tokenizer.vocab_size, **config['architecture'])
+        model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
         eval(batches, model, tokenizer, test_dir, test=True)
 
 
