@@ -404,7 +404,12 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
 
 
 def load_config(parent_path):
-    with open(parent_path / 'config.yml') as file:
+    """Returns empty dict if unable to load config file"""
+    config_path = parent_path / 'config.yml'
+    if not config_path.is_file():
+        return dict()
+
+    with open(config_path) as file:
         return yaml.load(file, Loader=yaml.SafeLoader)
 
 
