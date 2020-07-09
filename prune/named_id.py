@@ -316,6 +316,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
     np.random.shuffle(indices)
 
     # split windows in batches w.r.t. batch_size 
+    total_truncated_tokens, total_kept_tokens = 0, 0
     for i in tqdm(range(0, len(indices) - batch_size, batch_size), desc='Encoding batches'):
         text_batch, target_batch, audio_batch = [], [], None
         for j in indices[i: i + batch_size]:
@@ -324,8 +325,18 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             # TODO integrate audio
             # audio_batch.append(audio_windows[j])
         # encode batch (i.e. tokenize, tensorize...)
-        batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch, mask=mask)
-        batches.append(batch)
+        input_ids, target_ids, audio_similarity, \
+        src_key_padding_mask, tgt_key_padding_mask, num_truncated_tokens = \
+            batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch, mask=mask)
+        if num_truncated_tokens is None:
+            warnings.warn("Couldn't retrieve 'num_truncated_tokens'.")
+        else:
+            total_truncated_tokens += sum(num_truncated_tokens)
+        total_kept_tokens += np.prod(input_ids.shape)
+        batches.append((input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask))
+    if total_truncated_tokens > 0:
+        warnings.warn(f"Truncated {total_truncated_tokens:,d} out of "
+                      f"{total_truncated_tokens+total_kept_tokens:,d}")
     return batches
 
 
@@ -348,16 +359,20 @@ def batch_encode_plus(tokenizer, text_batch, mask=True):
     attention_mask: Tensor
         (batch_size, max_length). Used to mask input_ids.
         None if not mask.
+    num_truncated_tokens: List[int]
+        Number of tokens truncated because of max_length
     """
     text_encoded_plus = tokenizer.batch_encode_plus(text_batch,
                                                     add_special_tokens=False,
                                                     max_length=max_length,
-                                                    pad_to_max_length='right',
+                                                    pad_to_max_length=True,
                                                     return_tensors='pt',
-                                                    return_attention_mask=mask)
+                                                    return_attention_mask=mask,
+                                                    return_overflowing_tokens=True)
     input_ids = text_encoded_plus['input_ids']
     attention_mask = text_encoded_plus['attention_mask'] if mask else None
-    return input_ids, attention_mask
+    num_truncated_tokens = text_encoded_plus.get('num_truncated_tokens')
+    return input_ids, attention_mask, num_truncated_tokens
 
 
 def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, mask=True):
@@ -394,6 +409,8 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
     tgt_key_padding_mask: Tensor, optional
         (batch_size, max_length). Used to mask target_ids.
         Defaults to None (no masking).
+    num_truncated_tokens: List[int]
+        See batch_encode_plus
     """
     if audio_batch is not None:
         raise NotImplementedError("audio_batch")
@@ -403,16 +420,18 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
         audio_similarity = None
 
     # encode input text
-    input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch, mask=mask)
+    input_ids, src_key_padding_mask, num_truncated_tokens = batch_encode_plus(tokenizer,
+                                                                              text_batch, 
+                                                                              mask=mask)
 
     # encode target text
-    target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch, mask=mask)
+    target_ids, tgt_key_padding_mask, _ = batch_encode_plus(tokenizer, target_batch, mask=mask)
     # fix tgt_key_padding_mask when targets where previously tagged as '[PAD]' -> 0
     # FIXME is there a better way to do this?
     if tgt_key_padding_mask is not None:
         tgt_key_padding_mask[target_ids == PAD_ID] = PAD_ID
 
-    return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
+    return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask, num_truncated_tokens
 
 
 def load_config(parent_path):
