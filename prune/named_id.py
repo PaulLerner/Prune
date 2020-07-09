@@ -6,15 +6,6 @@ named_id.py train <protocol> <experiment_dir> [options]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen]
 named_id.py test <protocol> <validate_dir> [options]
 
-File structure should look like:
-<experiment_dir>
-└───config.yml
-│   <train_dir>
-│   └────weights
-│   │   └───*.tar
-│   │   <validate_dir>
-│   │   └───<test_dir>
-
 Common options:
 
 --subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test' [default: train]
@@ -26,6 +17,27 @@ Common options:
 
 Validation options:
 --evergreen          Start with the latest checkpoints
+
+File structure should look like:
+
+<experiment_dir>
+└───config.yml
+│   <train_dir>
+│   └────weights
+│   │   └───*.tar
+│   │   <validate_dir>
+│   │   └───<test_dir>
+
+config.yml is optional to set additional parameters (e.g. change the default model architecture)
+It should look like:
+
+architecture:
+    nhead: 8
+    num_encoder_layers: 6
+    dropout: 0.1
+training:
+    lr: 0.001
+    freeze: [bert]
 """
 
 from docopt import docopt
