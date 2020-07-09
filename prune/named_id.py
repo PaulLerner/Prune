@@ -2,16 +2,18 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> [options]
+named_id.py train <protocol> <experiment_dir> [options]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen]
 named_id.py test <protocol> <validate_dir> [options]
 
 File structure should look like:
-<train_dir>
-└───weights
-│   └───*.tar
-│   <validate_dir>
-│   └───<test_dir>
+<experiment_dir>
+└───config.yml
+│   <train_dir>
+│   └────weights
+│   │   └───*.tar
+│   │   <validate_dir>
+│   │   └───<test_dir>
 
 Common options:
 
@@ -29,6 +31,7 @@ from docopt import docopt
 from tqdm import tqdm
 from pathlib import Path
 import json
+import yaml
 import warnings
 
 from pyannote.core import Segment
@@ -400,6 +403,11 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
 
+def load_config(parent_path):
+    with open(parent_path / 'config.yml') as file:
+        return yaml.load(file, Loader=yaml.SafeLoader)
+
+
 if __name__ == '__main__':
     # parse arguments and get protocol
     args = docopt(__doc__)
@@ -411,6 +419,7 @@ if __name__ == '__main__':
     mask = args['--mask']
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
+    full_name = f'{protocol_name}.{subset}'
     mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
 
     # instantiate tokenizer
@@ -423,21 +432,30 @@ if __name__ == '__main__':
                        step_size=step_size,
                        mask=mask)
 
-    # instantiate model
-    model = SidNet(BERT, tokenizer.vocab_size, audio=None)
-
     if args['train']:
-        train_dir = Path(f'{protocol_name}.{subset}')
+        train_dir = Path(args['<experiment_dir>'], full_name)
         train_dir.mkdir(exist_ok=True)
-        model, optimizer = train(batches, model, train_dir)
+        with open(train_dir.parents[0]/'config.yml') as file:
+            config = yaml.load(file, Loader=yaml.SafeLoader)
+
+        model = SidNet(BERT, tokenizer.vocab_size, **config['architecture'])
+        model, optimizer = train(batches, model, train_dir, **config['training'])
+
     elif args['validate']:
         evergreen = args['--evergreen']
-        validate_dir = Path(args['<train_dir>'], f'{protocol_name}.{subset}')
+        validate_dir = Path(args['<train_dir>'], full_name)
         validate_dir.mkdir(exist_ok=True)
+        config = load_config(validate_dir.parents[1])
+
+        model = SidNet(BERT, tokenizer.vocab_size, **config['architecture'])
         eval(batches, model, tokenizer, validate_dir, test=False, evergreen=evergreen)
+
     elif args['test']:
-        test_dir = Path(args['<validate_dir>'], f'{protocol_name}.{subset}')
+        test_dir = Path(args['<validate_dir>'], full_name)
         test_dir.mkdir(exist_ok=True)
+        config = load_config(test_dir.parents[2])
+
+        model = SidNet(BERT, tokenizer.vocab_size, **config['architecture'])
         eval(batches, model, tokenizer, test_dir, test=True)
 
 
