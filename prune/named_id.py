@@ -475,8 +475,7 @@ if __name__ == '__main__':
         start_epoch = int(args['--from']) if args['--from'] else None
         train_dir = Path(args['<experiment_dir>'], full_name)
         train_dir.mkdir(exist_ok=True)
-        with open(train_dir.parents[0]/'config.yml') as file:
-            config = yaml.load(file, Loader=yaml.SafeLoader)
+        config = load_config(train_dir.parents[0)
 
         model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
         model, optimizer = train(batches, model, train_dir,
