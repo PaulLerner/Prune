@@ -14,6 +14,7 @@ Common options:
 --step=<step>		 Step size [default: 1]
 --max_len=<max_len>	 Maximum # of tokens input to BERT. Maximum 512 [default: 256]
 --mask               Compute attention_mask according to max_len.
+--easy               Only keep text windows with named speakers in it.
 
 Training options:
 --from=<epoch>       Start training back from a specific checkpoint (epoch #)
@@ -274,15 +275,50 @@ def batch2numpy(tokenizer, batch):
     return np.array(decoded, dtype=str)
 
 
+def any_in_text(items, text):
+    """Utility function.
+    Returns True if any of the item in items is in text, False otherwise.
+    """
+
+    for item in items:
+        if item in text:
+            return True
+    return False
+
+
 def batchify(tokenizer, protocol, mapping, subset='train',
-             batch_size=128, window_size=10, step_size=1, mask=True):
-    """Iterates over protocol subset, segment transcription in speaker turns,
+             batch_size=128, window_size=10, step_size=1, mask=True, easy=False):
+    """
+    Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
     And finally, encode batch (i.e. tokenize, tensorize...)
 
-    mapping is used to convert normalized speaker names into its most common name.
-    Note that it's important that this name is as written in the input text.
-    
+    Parameters
+    ----------
+    tokenizer: BertTokenizer
+        used to tokenize, pad and tensorize text
+    protocol: Protocol
+        pyannote Protocol to get transcription from
+    mapping: dict
+        used to convert normalized speaker names into its most common name.
+        Note that it's important that this name is as written in the input text.
+    subset: str, optional
+        subset of the protocol to get transcription from
+        Defaults to training set.
+    batch_size: int, optional
+        Defaults to 128.
+    window_size: int, optional
+        Number of speaker turns in one window
+        Defaults to 10.
+    step_size: int, optional
+        Defaults to 1.
+    mask: bool, optional
+        Compute attention_mask according to max_length.
+        Defaults to True.
+    easy: bool, optional
+        Only keep windows with named speakers in it
+        (the name must match one of the labels as provided in mapping)
+        Defaults to keep every window regardless of it's content.
     Returns
     -------
     batches: List[Tuple[Tensor]]:
@@ -328,7 +364,11 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         for i in range(0, len(windows) - window_size, step_size):
             start, _ = windows[i]
             _, end = windows[i + window_size - 1]
-            text_windows.append(" ".join(tokens[start:end]))
+            text_window = " ".join(tokens[start:end])
+            # easy mode -> Only keep windows with named speakers in it
+            if easy and not any_in_text(set(targets[start:end]), text_window):
+                continue
+            text_windows.append(text_window)
             audio_windows.append(audio[start:end])
             target_windows.append(" ".join(targets[start:end]))
 
@@ -456,6 +496,7 @@ if __name__ == '__main__':
     step_size = int(args['--step']) if args['--step'] else 1
     max_length = int(args['--max_len']) if args['--max_len'] else 256
     mask = args['--mask']
+    easy = args['--easy']
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
     full_name = f'{protocol_name}.{subset}'
@@ -469,7 +510,8 @@ if __name__ == '__main__':
                        batch_size=batch_size,
                        window_size=window_size,
                        step_size=step_size,
-                       mask=mask)
+                       mask=mask,
+                       easy=easy)
 
     if args['train']:
         start_epoch = int(args['--from']) if args['--from'] else None
