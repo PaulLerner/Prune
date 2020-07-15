@@ -71,16 +71,13 @@ np.random.seed(0)
 manual_seed(0)
 
 EPOCH_FORMAT = '{:04d}.tar'
-
-# tokenization constants
 BERT = 'bert-base-cased'
-PAD_TOKEN, PAD_ID = '[PAD]', 0
 
 # constant paths
 DATA_PATH = Path(PC.__file__).parent / 'data'
 
 
-def batch_accuracy(targets, predictions, pad=PAD_ID):
+def batch_accuracy(targets, predictions, pad=0):
     """Compute accuracy at the batch level.
     Should work the same with torch and np.
     Ignores padded targets.
@@ -129,7 +126,7 @@ def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
     if not weights_path.exists():
         raise ValueError(f'Weights path "{weights_path}" does not exist.')
 
-    criterion = NLLLoss(ignore_index=PAD_ID)
+    criterion = NLLLoss(ignore_index=tokenizer.pad_token_id)
     tb = SummaryWriter(validate_dir)
     weights = sorted(weights_path.iterdir(), reverse=evergreen)
     for weight in tqdm(weights, desc='Evaluating'):
@@ -150,12 +147,12 @@ def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
                 predictions = argmax(output, dim=2)
 
                 # compute batch-token accuracy
-                epoch_token_acc += batch_accuracy(target_ids, predictions, PAD_ID)
+                epoch_token_acc += batch_accuracy(target_ids, predictions, tokenizer.pad_token_id)
 
                 # decode and compute word accuracy
                 decoded_targets = batch2numpy(tokenizer, target_ids)
                 decoded_predictions = batch2numpy(tokenizer, predictions)
-                epoch_word_acc += batch_accuracy(decoded_targets, decoded_predictions, PAD_TOKEN)
+                epoch_word_acc += batch_accuracy(decoded_targets, decoded_predictions, tokenizer.pad_token)
 
                 # TODO fuse batch output at the document level and compute accuracy
 
@@ -172,7 +169,8 @@ def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc / len(batches), epoch)
 
 
-def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3, max_grad_norm=None,
+def train(batches, model, tokenizer, train_dir=Path.cwd(),
+          audio=None, lr=1e-3, max_grad_norm=None,
           epochs=100, freeze=['bert'], save_every=1, start_epoch=None):
     """Train the model for `epochs` epochs
 
@@ -183,6 +181,8 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3, max_grad_no
         see batch_encode_multi
     model: SidNet
         instance of SidNet, ready to be trained
+    tokenizer: BertTokenizer
+        used to get tokenization constants (e.g. tokenizer.pad_token_id == 0)
     train_dir: Path, optional
         Path to log training loss and save model weights (under experiment_path/weights)
         Defaults to current working directory.
@@ -230,7 +230,7 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3, max_grad_no
     model.freeze(freeze)
     model.train()
 
-    criterion = NLLLoss(ignore_index=PAD_ID)
+    criterion = NLLLoss(ignore_index=tokenizer.pad_token_id)
 
     tb = SummaryWriter(train_dir)
     for epoch in tqdm(range(start_epoch, epochs+start_epoch), desc='Training'):
@@ -359,9 +359,9 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             if token._.confidence > 0.5 and '#unknown#' not in token._.speaker:
                 audio.append(Segment(token._.time_start, token._.time_end))
             else:
-                audio.append(PAD_TOKEN)
+                audio.append(tokenizer.pad_token)
             # if we don't have a proper target we should mask the loss function
-            targets.append(mapping.get(token._.speaker, PAD_TOKEN))
+            targets.append(mapping.get(token._.speaker, tokenizer.pad_token))
             previous_speaker = token._.speaker
             end += 1
         windows.pop(0)
@@ -477,7 +477,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
     # fix tgt_key_padding_mask when targets where previously tagged as '[PAD]' -> 0
     # FIXME is there a better way to do this?
     if tgt_key_padding_mask is not None:
-        tgt_key_padding_mask[target_ids == PAD_ID] = PAD_ID
+        tgt_key_padding_mask[target_ids == tokenizer.pad_token_id] = tokenizer.pad_token_id
 
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
@@ -526,7 +526,7 @@ if __name__ == '__main__':
         config = load_config(train_dir.parents[0])
 
         model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
-        model, optimizer = train(batches, model, train_dir,
+        model, optimizer = train(batches, model, tokenizer, train_dir,
                                  start_epoch=start_epoch,
                                  **config.get('training', {}))
 
