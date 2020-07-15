@@ -15,6 +15,7 @@ Common options:
 --max_len=<max_len>	 Maximum # of tokens input to BERT. Maximum 512 [default: 256]
 --mask               Compute attention_mask according to max_len.
 --easy               Only keep text windows with named speakers in it.
+--sep_change         Add a special "[SEP]" token between every speech turn.
 
 Training options:
 --from=<epoch>       Start training back from a specific checkpoint (epoch #)
@@ -293,7 +294,8 @@ def any_in_text(items, text):
 
 
 def batchify(tokenizer, protocol, mapping, subset='train',
-             batch_size=128, window_size=10, step_size=1, mask=True, easy=False):
+             batch_size=128, window_size=10, step_size=1,
+             mask=True, easy=False, sep_change=False):
     """
     Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
@@ -325,6 +327,9 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         Only keep windows with named speakers in it
         (the name must match one of the labels as provided in mapping)
         Defaults to keep every window regardless of it's content.
+    sep_change: bool, optional
+        Add special token tokenizer.sep_token ("[SEP]") between every speech turn.
+        Defaults to keep input as is.
     Returns
     -------
     batches: List[Tuple[Tensor]]:
@@ -350,6 +355,12 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         previous_speaker = None
         for token in transcription:
             if token._.speaker != previous_speaker:
+                # mark speaker change with special token tokenizer.sep_token ("[SEP]")
+                if sep_change:
+                    tokens.append(tokenizer.sep_token)
+                    targets.append(tokenizer.pad_token)
+                    audio.append(tokenizer.pad_token)
+                    end += 1
                 windows.append((start, end))
                 start = end
             tokens.append(token.text)
@@ -503,6 +514,7 @@ if __name__ == '__main__':
     max_length = int(args['--max_len']) if args['--max_len'] else 256
     mask = args['--mask']
     easy = args['--easy']
+    sep_change = args['--sep_change']
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
     full_name = f'{protocol_name}.{subset}'
@@ -517,7 +529,8 @@ if __name__ == '__main__':
                        window_size=window_size,
                        step_size=step_size,
                        mask=mask,
-                       easy=easy)
+                       easy=easy,
+                       sep_change=sep_change)
 
     if args['train']:
         start_epoch = int(args['--from']) if args['--from'] else None
