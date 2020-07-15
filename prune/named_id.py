@@ -59,6 +59,7 @@ import numpy as np
 
 from torch import save, load, manual_seed, no_grad, argmax, Tensor
 from torch.utils.tensorboard import SummaryWriter
+from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
 from torch.nn import NLLLoss
 from transformers import BertTokenizer
@@ -171,7 +172,7 @@ def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc / len(batches), epoch)
 
 
-def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
+def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3, max_grad_norm=None,
           epochs=100, freeze=['bert'], save_every=1, start_epoch=None):
     """Train the model for `epochs` epochs
 
@@ -192,6 +193,9 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
     lr: float, optional
         Learning rate used to optimize model parameters.
         Defaults to 1e-3
+    max_grad_norm: float, optional
+        Clips gradient L2 norm at max_grad_norm
+        Defaults to no clipping.
     epochs: int, optional
         Train the model for `epochs` epochs.
         Defaults to 100
@@ -249,6 +253,8 @@ def train(batches, model, train_dir=Path.cwd(), audio=None, lr=1e-3,
             # calculate loss
             loss = criterion(output, target_ids)
             loss.backward()
+            if max_grad_norm is not None:
+                clip_grad_norm_(model.parameters(), max_grad_norm)
             optimizer.step()
             epoch_loss += loss.item()
 
