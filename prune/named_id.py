@@ -19,6 +19,9 @@ Common options:
 
 Training options:
 --from=<epoch>       Start training back from a specific checkpoint (epoch #)
+--augment=<ratio>    If greater than 0, will generate `augment` synthetic examples per real example
+                     See batchify for details.
+                     Defaults to no augmentation.
 
 Validation options:
 --evergreen          Start with the latest checkpoints
@@ -56,6 +59,7 @@ from pyannote.core import Segment
 from pyannote.database import get_protocol
 import Plumcot as PC
 
+import re
 import numpy as np
 
 from torch import save, load, manual_seed, no_grad, argmax, Tensor
@@ -76,7 +80,7 @@ BERT = 'bert-base-cased'
 
 # constant paths
 DATA_PATH = Path(PC.__file__).parent / 'data'
-
+CHARACTERS_PATH = DATA_PATH.glob('*/characters.txt')
 
 def batch_accuracy(targets, predictions, pad=0):
     """Compute accuracy at the batch level.
@@ -295,7 +299,7 @@ def any_in_text(items, text):
 
 def batchify(tokenizer, protocol, mapping, subset='train',
              batch_size=128, window_size=10, step_size=1,
-             mask=True, easy=False, sep_change=False):
+             mask=True, easy=False, sep_change=False, augment=0):
     """
     Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
@@ -330,6 +334,13 @@ def batchify(tokenizer, protocol, mapping, subset='train',
     sep_change: bool, optional
         Add special token tokenizer.sep_token ("[SEP]") between every speech turn.
         Defaults to keep input as is.
+    augment: int, optional
+        Data augmentation ratio.
+        If greater than 0, will generate `augment` synthetic examples per real example
+        by replacing speaker names in input text and target by a random name.
+        Note that it doesn't have any effect if no speaker names (as provided in mapping)
+        are present in the input text.
+        Defaults to no augmentation.
     Returns
     -------
     batches: List[Tuple[Tensor]]:
@@ -339,6 +350,14 @@ def batchify(tokenizer, protocol, mapping, subset='train',
 
     with open(mapping) as file:
         mapping = json.load(file)
+
+    # load list of names
+    if augment > 0:
+        names = []
+        for character_file in CHARACTERS_PATH:
+            with open(character_file) as file:
+                names += [line.split(',')[3].split()[0]
+                          for line in file.read().split("\n") if line != '']
 
     batches = []
     text_windows, audio_windows, target_windows = [], [], []
@@ -378,16 +397,42 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         windows.pop(0)
 
         # slide through the transcription speaker turns w.r.t. window_size, step_size
+        # filter out windows w.r.t. easy
+        # and augment them w.t.t. augment
         for i in range(0, len(windows) - window_size, step_size):
             start, _ = windows[i]
             _, end = windows[i + window_size - 1]
             text_window = " ".join(tokens[start:end])
+            target_window = " ".join(targets[start:end])
+
+            # set of actual targets (i.e. excluding [PAD], [SEP], etc.)
+            target_set = set(targets[start:end]) - set(tokenizer.all_special_tokens)
+
             # easy mode -> Only keep windows with named speakers in it
-            if easy and not any_in_text(set(targets[start:end]), text_window):
+            if easy and not any_in_text(target_set, text_window):
                 continue
+
             text_windows.append(text_window)
             audio_windows.append(audio[start:end])
-            target_windows.append(" ".join(targets[start:end]))
+            target_windows.append(target_window)
+
+            # add `augment` windows of synthetic data
+            for augmentation in range(augment):
+                synthetic_text = text_window
+                synthetic_targets = target_window
+                # augment data by replacing
+                # speaker names in input text and target by a random name
+                for target in target_set:
+                    # except if the name is not present in the input text
+                    # this would only add noise
+                    if target not in text_window:
+                        continue
+                    random_name = np.random.choice(names)
+                    synthetic_text = re.sub(fr'\b{target}\b', random_name, synthetic_text)
+                    synthetic_targets = re.sub(fr'\b{target}\b', random_name, synthetic_targets)
+                audio_windows.append(audio[start:end])
+                text_windows.append(synthetic_text)
+                target_windows.append(synthetic_targets)
 
     # shuffle all windows
     indices = np.arange(len(text_windows))
@@ -515,6 +560,7 @@ if __name__ == '__main__':
     mask = args['--mask']
     easy = args['--easy']
     sep_change = args['--sep_change']
+    augment = int(args['--augment']) if args['--augment'] else 0
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
     full_name = f'{protocol_name}.{subset}'
@@ -530,7 +576,8 @@ if __name__ == '__main__':
                        step_size=step_size,
                        mask=mask,
                        easy=easy,
-                       sep_change=sep_change)
+                       sep_change=sep_change,
+                       augment=augment)
 
     if args['train']:
         start_epoch = int(args['--from']) if args['--from'] else None
