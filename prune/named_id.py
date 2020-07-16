@@ -530,10 +530,6 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
 
     # encode target text
     target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch, mask=mask)
-    # fix tgt_key_padding_mask when targets where previously tagged as '[PAD]' -> 0
-    # FIXME is there a better way to do this?
-    if tgt_key_padding_mask is not None:
-        tgt_key_padding_mask[target_ids == tokenizer.pad_token_id] = tokenizer.pad_token_id
 
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
