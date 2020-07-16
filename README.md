@@ -3,6 +3,10 @@ Code for Plumcot project which doesn't fit in https://github.com/pyannote, https
 
 See also https://github.com/PaulLerner/Forced-Alignment which unfortunately contains closed source dependencies.
 
+## Named-identification (`named_id.py` and `sidnet.py`)
+
+:warning: Beware not to use `torch 1.3`, see https://github.com/pytorch/pytorch/issues/28272
+
 ## Visualization (`visualize.py`)
 
 ```
