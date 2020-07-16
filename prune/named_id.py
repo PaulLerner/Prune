@@ -3,8 +3,8 @@
 
 """Usage:
 named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>]
-named_id.py validate <protocol> <train_dir> [options] [--evergreen]
-named_id.py test <protocol> <validate_dir> [options]
+named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
+named_id.py test <protocol> <validate_dir> [options] [--interactive]
 
 Common options:
 
@@ -25,6 +25,7 @@ Training options:
 
 Validation options:
 --evergreen          Start with the latest checkpoints
+--interactive        Open-up python debugger after each forward pass
 
 File structure should look like:
 
@@ -102,7 +103,8 @@ def batch_accuracy(targets, predictions, pad=0):
     return batch_acc
 
 
-def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
+def eval(batches, model, tokenizer, validate_dir,
+         test=False, evergreen=False, interactive=False):
     """Load model from checkpoint and evaluate it on batches.
     When testing, only the best model should be tested.
 
@@ -123,6 +125,9 @@ def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
         Defaults to False.
     evergreen: bool, optional
         Whether to start validation with the latest checkpoints.
+        Defaults to False.
+    interactive: bool, optional
+        Opens-up python debugger after each forward pass.
         Defaults to False.
     """
     if test:
@@ -158,6 +163,9 @@ def eval(batches, model, tokenizer, validate_dir, test=False, evergreen=False):
                 decoded_targets = batch2numpy(tokenizer, target_ids)
                 decoded_predictions = batch2numpy(tokenizer, predictions)
                 epoch_word_acc += batch_accuracy(decoded_targets, decoded_predictions, tokenizer.pad_token)
+
+                if interactive:
+                    breakpoint()
 
                 # TODO fuse batch output at the document level and compute accuracy
 
@@ -588,19 +596,22 @@ if __name__ == '__main__':
 
     elif args['validate']:
         evergreen = args['--evergreen']
+        interactive = args['--interactive']
         validate_dir = Path(args['<train_dir>'], full_name)
         validate_dir.mkdir(exist_ok=True)
         config = load_config(validate_dir.parents[1])
 
         model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
-        eval(batches, model, tokenizer, validate_dir, test=False, evergreen=evergreen)
+        eval(batches, model, tokenizer, validate_dir,
+             test=False, evergreen=evergreen, interactive=interactive)
 
     elif args['test']:
+        interactive = args['--interactive']
         test_dir = Path(args['<validate_dir>'], full_name)
         test_dir.mkdir(exist_ok=True)
         config = load_config(test_dir.parents[2])
 
         model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
-        eval(batches, model, tokenizer, test_dir, test=True)
+        eval(batches, model, tokenizer, test_dir, test=True, interactive=interactive)
 
 
