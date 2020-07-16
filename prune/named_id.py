@@ -435,11 +435,13 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                 for target in target_set:
                     # except if the name is not present in the input text
                     # this would only add noise
-                    if target not in text_window:
+                    if not re.search(target, text_window, flags=re.IGNORECASE):
                         continue
                     random_name = np.random.choice(names)
-                    synthetic_text = re.sub(fr'\b{target}\b', random_name, synthetic_text)
-                    synthetic_targets = re.sub(fr'\b{target}\b', random_name, synthetic_targets)
+                    synthetic_text = re.sub(fr'\b{target}\b', random_name,
+                                            synthetic_text, flags=re.IGNORECASE)
+                    synthetic_targets = re.sub(fr'\b{target}\b', random_name,
+                                               synthetic_targets, flags=re.IGNORECASE)
                 audio_windows.append(audio[start:end])
                 text_windows.append(synthetic_text)
                 target_windows.append(synthetic_targets)
