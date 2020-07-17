@@ -86,26 +86,26 @@ DATA_PATH = Path(PC.__file__).parent / 'data'
 CHARACTERS_PATH = DATA_PATH.glob('*/characters.txt')
 
 
-def batch_accuracy(targets, predictions, pad=0):
+def batch_token_accuracy(targets, predictions, pad=0):
     """Compute accuracy at the batch level.
-    Should work the same with torch and np.
     Ignores padded targets.
     """
 
     indices = targets != pad
-    where = predictions[indices] == targets[indices]
+    where = (predictions[indices] == targets[indices]).nonzero(as_tuple=True)
 
-    # switch between torch and np
-    if isinstance(where, Tensor):
-        where = where.nonzero(as_tuple=True)
-        total = indices.nonzero(as_tuple=True)
-    else:
-        where = where.nonzero()
-        total = indices.nonzero()
+    return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
-    batch_acc = where[0].shape[0] / total[0].shape[0]
 
-    return batch_acc
+def batch_word_accuracy(targets, predictions):
+    correct, total = 0, 0
+    for target, prediction in zip(targets, predictions):
+        target, prediction = target.split(), prediction.split()
+        for t, p in zip(target, prediction):
+            if t == p:
+                correct += 1
+            total += 1
+    return correct/total
 
 
 def eval(batches, model, tokenizer, log_dir,
@@ -168,12 +168,12 @@ def eval(batches, model, tokenizer, log_dir,
                 predictions = argmax(output, dim=2)
 
                 # compute batch-token accuracy
-                epoch_token_acc += batch_accuracy(target_ids, predictions, tokenizer.pad_token_id)
+                epoch_token_acc += batch_token_accuracy(target_ids, predictions, tokenizer.pad_token_id)
 
                 # decode and compute word accuracy
-                decoded_targets = batch2numpy(tokenizer, target_ids)
-                decoded_predictions = batch2numpy(tokenizer, predictions)
-                epoch_word_acc += batch_accuracy(decoded_targets, decoded_predictions, tokenizer.pad_token)
+                decoded_targets = tokenizer.batch_decode(target_ids, skip_special_tokens=True)
+                decoded_predictions = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+                epoch_word_acc += batch_word_accuracy(decoded_targets, decoded_predictions)
 
                 # TODO fuse batch output at the document level and compute accuracy
 
@@ -298,21 +298,6 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
             }, weights_path / EPOCH_FORMAT.format(epoch))
 
     return model, optimizer
-
-
-def batch2numpy(tokenizer, batch):
-    """Decode batch to list of string using tokenizer
-    then reshape the list of str to a np array of tokens"""
-
-    decoded = tokenizer.batch_decode(batch)
-    decoded_list = []
-    for line in decoded:
-        # trim sequence to max length
-        line = line.split()[:max_length]
-        # pad sequence to max_length
-        line += [tokenizer.pad_token] * (max_length - len(line))
-        decoded_list.append(line)
-    return np.array(decoded_list, dtype=str)
 
 
 def any_in_text(items, text):
@@ -504,7 +489,7 @@ def batch_encode_plus(tokenizer, text_batch, mask=True):
         None if not mask.
     """
     text_encoded_plus = tokenizer.batch_encode_plus(text_batch,
-                                                    add_special_tokens=False,
+                                                    add_special_tokens=True,
                                                     max_length=max_length,
                                                     pad_to_max_length='right',
                                                     return_tensors='pt',
