@@ -8,7 +8,7 @@ import numpy as np
 from transformers import BertModel
 from torch.nn import Transformer, Module, Linear, LogSoftmax
 from torch.cuda import device_count
-from torch import device
+from torch import device, zeros_like, argmax
 
 
 DEVICES = [device('cpu')] if device_count() == 0 else \
@@ -174,3 +174,65 @@ class SidNet(Module):
         output = self.activation(text_output)
         return output
 
+    def search(self, input_ids, cls_token_id=101,
+              audio_similarity=None, src_key_padding_mask=None, tgt_key_padding_mask=None):
+        """Same as self.forward but doesn't take target as input: decode progressively starting from [CLS] token"""
+        # manage devices
+        device_ = next(self.bert.parameters()).device
+        input_ids = input_ids.to(device_)
+        target_ids = zeros_like(input_ids)
+        # start from [CLS] token
+        target_ids[:, 0] = cls_token_id
+        if src_key_padding_mask is not None:
+            src_key_padding_mask = src_key_padding_mask.to(device_)
+
+        # pass input text trough bert
+        hidden_states = self.bert(input_ids, src_key_padding_mask)[0]
+
+        # reshape BertModel output like (sequence_length, batch_size, hidden_size)
+        # to fit torch.nn.Transformer and manage devices
+        device_ = next(self.seq2seq.parameters()).device
+        hidden_states = hidden_states.transpose(0, 1).to(device_)
+
+        if self.tgt_mask is None or self.tgt_mask.shape[0] != target_ids.shape[1]:
+            self.tgt_mask = self.seq2seq.generate_square_subsequent_mask(
+                target_ids.shape[1]).to(device_)
+        # convert HuggingFace mask to PyTorch mask and manage devices
+        #     HuggingFace: 1    -> NOT MASKED, 0     -> MASKED
+        #     PyTorch:     True -> MASKED,     False -> NOT MASKED
+        if src_key_padding_mask is not None:
+            src_key_padding_mask = ~src_key_padding_mask.bool().to(device_)
+        if tgt_key_padding_mask is not None:
+            tgt_key_padding_mask = ~tgt_key_padding_mask.bool().to(device_)
+
+        # pass hidden_states through encoder
+        memory = self.seq2seq.encoder(hidden_states, mask=None, src_key_padding_mask=src_key_padding_mask)
+
+        # decode progressively starting from [CLS] token
+        for i in range(target_ids.shape[1]-1):
+            # embed targets using bert embeddings
+            embedded_targets = self.bert.embeddings(target_ids)
+            # reshape BertModel output like (sequence_length, batch_size, hidden_size)
+            # to fit torch.nn.Transformer and manage devices
+            embedded_targets = embedded_targets.transpose(0, 1).to(device_)
+            text_output = self.seq2seq.decoder(embedded_targets, memory, tgt_mask=self.tgt_mask,
+                                               tgt_key_padding_mask=tgt_key_padding_mask)
+            # manage devices
+            device_ = next(self.linear.parameters()).device
+            text_output = self.linear(text_output.to(device_))
+
+            # reshape output like (batch_size, sequence_length, vocab_size)
+            text_output = text_output.transpose(0, 1)
+
+            # TODO weigh output using audio_similarity here
+            if audio_similarity is not None:
+                audio_similarity = audio_similarity.to(device_)
+
+            # activate with LogSoftmax
+            output = self.activation(text_output)
+
+            # replace target by prediction
+            predictions = argmax(output, dim=2)
+            target_ids = target_ids.to(predictions.device)
+            target_ids[:, i] = predictions[:, i]
+        return output
