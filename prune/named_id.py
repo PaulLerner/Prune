@@ -96,10 +96,10 @@ def batch_accuracy(targets, predictions, pad=0):
     # switch between torch and np
     if isinstance(where, Tensor):
         where = where.nonzero(as_tuple=True)
-        total = (~indices).nonzero(as_tuple=True)
+        total = indices.nonzero(as_tuple=True)
     else:
         where = where.nonzero()
-        total = (~indices).nonzero()
+        total = indices.nonzero()
 
     batch_acc = where[0].shape[0] / total[0].shape[0]
 
