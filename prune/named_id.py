@@ -83,6 +83,7 @@ BERT = 'bert-base-cased'
 DATA_PATH = Path(PC.__file__).parent / 'data'
 CHARACTERS_PATH = DATA_PATH.glob('*/characters.txt')
 
+
 def batch_accuracy(targets, predictions, pad=0):
     """Compute accuracy at the batch level.
     Should work the same with torch and np.
@@ -291,9 +292,14 @@ def batch2numpy(tokenizer, batch):
     then reshape the list of str to a np array of tokens"""
 
     decoded = tokenizer.batch_decode(batch)
-    decoded = [line.split() for line in decoded]
-
-    return np.array(decoded, dtype=str)
+    decoded_list = []
+    for line in decoded:
+        # trim sequence to max length
+        line = line.split()[:max_length]
+        # pad sequence to max_length
+        line += [tokenizer.pad_token] * (max_length - len(line))
+        decoded_list.append(line)
+    return np.array(decoded_list, dtype=str)
 
 
 def any_in_text(items, text):
