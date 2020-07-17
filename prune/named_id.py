@@ -35,7 +35,9 @@ File structure should look like:
 │   └────weights
 │   │   └───*.tar
 │   │   <validate_dir>
-│   │   └───<test_dir>
+│   │   └───params.yml
+│   │   │   <test_dir>
+│   │   │   └───params.yml
 
 config.yml is optional to set additional parameters (e.g. change the default model architecture)
 It should look like:
@@ -106,7 +108,7 @@ def batch_accuracy(targets, predictions, pad=0):
     return batch_acc
 
 
-def eval(batches, model, tokenizer, validate_dir,
+def eval(batches, model, tokenizer, log_dir,
          test=False, evergreen=False, interactive=False):
     """Load model from checkpoint and evaluate it on batches.
     When testing, only the best model should be tested.
@@ -120,9 +122,11 @@ def eval(batches, model, tokenizer, validate_dir,
         instance of SidNet, ready to be loaded
     tokenizer: BertTokenizer
         used to decode output (i.e. de-tensorize, de-tokenize)
-    validate_dir: Path
-        Path to log validation accuracy and load model weights (from ../weights)
-        Defaults to current working directory.
+    log_dir: Path
+        either:
+        - [!test]: Path to log validation accuracy and load model weights (from ../weights)
+        - [test]: Path to log test accuracy, load model weights (from ../../weights)
+                  and load best epoch (from ../params.yml)
     test: bool, optional
         Whether to test only the best model.
         Defaults to False.
@@ -133,16 +137,19 @@ def eval(batches, model, tokenizer, validate_dir,
         Opens-up python debugger after each forward pass.
         Defaults to False.
     """
+
     if test:
-        raise NotImplementedError('test')
-    weights_path = validate_dir.parent / 'weights'
-    if not weights_path.exists():
-        raise ValueError(f'Weights path "{weights_path}" does not exist.')
+        weights_path = log_dir.parents[1] / 'weights'
+        with open(log_dir.parent / 'params.yml') as file:
+            epoch = yaml.load(file)["epoch"]
+        weights = [weights_path/EPOCH_FORMAT.format(epoch)]
+    else:
+        weights_path = log_dir.parents[0] / 'weights'
+        weights = sorted(weights_path.iterdir(), reverse=evergreen)
 
     criterion = NLLLoss(ignore_index=tokenizer.pad_token_id)
-    tb = SummaryWriter(validate_dir)
+    tb = SummaryWriter(log_dir)
     best = 0.
-    weights = sorted(weights_path.iterdir(), reverse=evergreen)
     for weight in tqdm(weights, desc='Evaluating'):
         checkpoint = load(weight)
         epoch = checkpoint["epoch"]
@@ -168,9 +175,6 @@ def eval(batches, model, tokenizer, validate_dir,
                 decoded_predictions = batch2numpy(tokenizer, predictions)
                 epoch_word_acc += batch_accuracy(decoded_targets, decoded_predictions, tokenizer.pad_token)
 
-                if interactive:
-                    breakpoint()
-
                 # TODO fuse batch output at the document level and compute accuracy
 
                 # compute loss
@@ -181,15 +185,17 @@ def eval(batches, model, tokenizer, validate_dir,
                 loss = criterion(output, target_ids)
                 epoch_loss += loss.item()
 
+                if interactive:
+                    breakpoint()
+
             tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
             tb.add_scalar('Accuracy/eval/batch/token', epoch_token_acc / len(batches), epoch)
             epoch_word_acc /= len(batches)
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc, epoch)
             if epoch_word_acc > best:
                 best = epoch_word_acc
-                with open(validate_dir / 'params.yml', 'w') as file:
+                with open(log_dir / 'params.yml', 'w') as file:
                     yaml.dump({"accuracy": best, "epoch": epoch}, file)
-
 
 
 def train(batches, model, tokenizer, train_dir=Path.cwd(),
