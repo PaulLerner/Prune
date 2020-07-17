@@ -65,7 +65,6 @@ class SidNet(Module):
         self.bert = BertModel.from_pretrained(bert).to(device=DEVICES[0])
         self.hidden_size = self.bert.config.hidden_size
         self.vocab_size = vocab_size
-        self.src_mask = None
         self.tgt_mask = None
         self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=DEVICES[-1])
         self.linear = Linear(self.hidden_size, self.vocab_size).to(device=DEVICES[0])
@@ -145,10 +144,6 @@ class SidNet(Module):
         hidden_states = hidden_states.transpose(0, 1).to(device_)
         embedded_targets = embedded_targets.transpose(0, 1).to(device_)
 
-        # FIXME are all these masks done the right way ?
-        if self.src_mask is None or self.src_mask.shape[0] != len(hidden_states):
-            self.src_mask = self.seq2seq.generate_square_subsequent_mask(
-                                len(hidden_states)).to(device_)
         if self.tgt_mask is None or self.tgt_mask.shape[0] != len(embedded_targets):
             self.tgt_mask = self.seq2seq.generate_square_subsequent_mask(
                                 len(embedded_targets)).to(device_)
@@ -161,7 +156,7 @@ class SidNet(Module):
             tgt_key_padding_mask = ~tgt_key_padding_mask.bool().to(device_)
 
         text_output = self.seq2seq(hidden_states, embedded_targets,
-                                   src_mask=self.src_mask, tgt_mask=self.tgt_mask,
+                                   src_mask=None, tgt_mask=self.tgt_mask,
                                    src_key_padding_mask=src_key_padding_mask,
                                    tgt_key_padding_mask=tgt_key_padding_mask)
         # manage devices
