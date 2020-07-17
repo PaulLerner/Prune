@@ -141,6 +141,7 @@ def eval(batches, model, tokenizer, validate_dir,
 
     criterion = NLLLoss(ignore_index=tokenizer.pad_token_id)
     tb = SummaryWriter(validate_dir)
+    best = 0.
     weights = sorted(weights_path.iterdir(), reverse=evergreen)
     for weight in tqdm(weights, desc='Evaluating'):
         checkpoint = load(weight)
@@ -182,7 +183,13 @@ def eval(batches, model, tokenizer, validate_dir,
 
             tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
             tb.add_scalar('Accuracy/eval/batch/token', epoch_token_acc / len(batches), epoch)
-            tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc / len(batches), epoch)
+            epoch_word_acc /= len(batches)
+            tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc, epoch)
+            if epoch_word_acc > best:
+                best = epoch_word_acc
+                with open(validate_dir / 'params.yml', 'w') as file:
+                    yaml.dump({"accuracy": best, "epoch": epoch}, file)
+
 
 
 def train(batches, model, tokenizer, train_dir=Path.cwd(),
