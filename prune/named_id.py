@@ -612,7 +612,7 @@ if __name__ == '__main__':
         train_dir.mkdir(exist_ok=True)
         config = load_config(train_dir.parents[0])
 
-        model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
+        model = SidNet(BERT, **config.get('architecture', {}))
         model, optimizer = train(batches, model, tokenizer, train_dir,
                                  start_epoch=start_epoch,
                                  **config.get('training', {}))
@@ -624,7 +624,7 @@ if __name__ == '__main__':
         validate_dir.mkdir(exist_ok=True)
         config = load_config(validate_dir.parents[1])
 
-        model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
+        model = SidNet(BERT, **config.get('architecture', {}))
         eval(batches, model, tokenizer, validate_dir,
              test=False, evergreen=evergreen, interactive=interactive)
 
@@ -634,7 +634,7 @@ if __name__ == '__main__':
         test_dir.mkdir(exist_ok=True)
         config = load_config(test_dir.parents[2])
 
-        model = SidNet(BERT, tokenizer.vocab_size, **config.get('architecture', {}))
+        model = SidNet(BERT, **config.get('architecture', {}))
         eval(batches, model, tokenizer, test_dir, test=True, interactive=interactive)
 
 

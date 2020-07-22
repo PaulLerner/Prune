@@ -58,13 +58,13 @@ class SidNet(Module):
     TODO
     """
 
-    def __init__(self, bert='bert-base-cased', vocab_size=28996, audio=None, **kwargs):
+    def __init__(self, bert='bert-base-cased', audio=None, **kwargs):
         super().__init__()
         # put bert and output layer in the first device
         # and the seq2seq in the last (hopefully another) one
         self.bert = BertModel.from_pretrained(bert).to(device=DEVICES[0])
         self.hidden_size = self.bert.config.hidden_size
-        self.vocab_size = vocab_size
+        self.vocab_size = self.bert.config.vocab_size
         self.tgt_mask = None
         self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=DEVICES[-1])
         self.linear = Linear(self.hidden_size, self.vocab_size).to(device=DEVICES[0])
