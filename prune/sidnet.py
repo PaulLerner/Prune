@@ -176,7 +176,11 @@ class SidNet(Module):
 
     def search(self, input_ids, cls_token_id=101,
               audio_similarity=None, src_key_padding_mask=None, tgt_key_padding_mask=None):
-        """Same as self.forward but doesn't take target as input: decode progressively starting from [CLS] token"""
+        """Same as self.forward but doesn't take target as input:
+        decode progressively starting from [CLS] token
+
+        Note that output is expected to have the same shape as input_ids
+        """
         # manage devices
         device_ = next(self.bert.parameters()).device
         input_ids = input_ids.to(device_)
