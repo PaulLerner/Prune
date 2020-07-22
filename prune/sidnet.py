@@ -218,15 +218,15 @@ class SidNet(Module):
             text_output = self.seq2seq.decoder(embedded_targets, memory, tgt_mask=self.tgt_mask,
                                                tgt_key_padding_mask=tgt_key_padding_mask)
             # manage devices
-            device_ = next(self.linear.parameters()).device
-            text_output = self.linear(text_output.to(device_))
+            l_device_ = next(self.linear.parameters()).device
+            text_output = self.linear(text_output.to(l_device_))
 
             # reshape output like (batch_size, sequence_length, vocab_size)
             text_output = text_output.transpose(0, 1)
 
             # TODO weigh output using audio_similarity here
             if audio_similarity is not None:
-                audio_similarity = audio_similarity.to(device_)
+                audio_similarity = audio_similarity.to(l_device_)
 
             # activate with LogSoftmax
             output = self.activation(text_output)

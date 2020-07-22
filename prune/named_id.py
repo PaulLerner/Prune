@@ -162,8 +162,8 @@ def eval(batches, model, tokenizer, log_dir,
             epoch_loss, epoch_token_acc, epoch_word_acc = 0., 0., 0.
             for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass
-                output = model(input_ids, target_ids, audio_similarity,
-                               src_key_padding_mask, tgt_key_padding_mask)
+                output = model.search(input_ids, tokenizer.cls_token_id, audio_similarity,
+                                      src_key_padding_mask, tgt_key_padding_mask)
                 # manage devices
                 target_ids = target_ids.to(output.device)
 
