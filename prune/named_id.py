@@ -204,7 +204,8 @@ def eval(batches, model, tokenizer, log_dir,
 
 def train(batches, model, tokenizer, train_dir=Path.cwd(),
           audio=None, lr=1e-3, max_grad_norm=None,
-          epochs=100, freeze=['bert'], save_every=1, start_epoch=None):
+          epochs=100, freeze=['bert'], save_every=1,
+          start_epoch=None, teacher_forcing=2.0):
     """Train the model for `epochs` epochs
 
     Parameters
@@ -241,6 +242,9 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     start_epoch: int, optional
         Starts training back at start_epoch.
         Defaults to raise an error if training in an existing directory
+    teacher_forcing: float, optional
+        Ratio of teacher forcing (i.e. use target as Transformer input)
+        Defaults to always teacher-force
     """
     optimizer = Adam(model.parameters(), lr=lr)
 
@@ -274,9 +278,14 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
             optimizer.zero_grad()
 
-            # forward pass
-            output = model(input_ids, target_ids, audio_similarity,
-                           src_key_padding_mask, tgt_key_padding_mask)
+            # forward pass - teacher forcing
+            if np.random.rand() < teacher_forcing:
+                output = model(input_ids, target_ids, audio_similarity,
+                               src_key_padding_mask, tgt_key_padding_mask)
+            # forward pass - decode using model's own prediction
+            else:
+                output = model.search(input_ids, tokenizer.cls_token_id, audio_similarity,
+                                      src_key_padding_mask, tgt_key_padding_mask)
             # reshape output like (batch_size * sequence_length, vocab_size)
             # and target_ids like (batch_size * sequence_length)
             # and manage devices
