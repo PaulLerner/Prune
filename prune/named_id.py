@@ -97,11 +97,14 @@ def batch_token_accuracy(targets, predictions, pad=0):
     return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
 
-def batch_word_accuracy(targets, predictions):
+def batch_word_accuracy(targets, predictions, special_tokens=set()):
     correct, total = 0, 0
     for target, prediction in zip(targets, predictions):
         target, prediction = target.split(), prediction.split()
         for t, p in zip(target, prediction):
+            # don't evaluate [PAD], [CLS], [SEP]...
+            if t in special_tokens:
+                continue
             if t == p:
                 correct += 1
             total += 1
@@ -171,9 +174,10 @@ def eval(batches, model, tokenizer, log_dir,
                 epoch_token_acc += batch_token_accuracy(target_ids, predictions, tokenizer.pad_token_id)
 
                 # decode and compute word accuracy
-                decoded_targets = tokenizer.batch_decode(target_ids, skip_special_tokens=True)
-                decoded_predictions = tokenizer.batch_decode(predictions, skip_special_tokens=True)
-                epoch_word_acc += batch_word_accuracy(decoded_targets, decoded_predictions)
+                decoded_targets = tokenizer.batch_decode(target_ids, skip_special_tokens=False)
+                decoded_predictions = tokenizer.batch_decode(predictions, skip_special_tokens=False)
+                epoch_word_acc += batch_word_accuracy(decoded_targets, decoded_predictions,
+                                                      special_tokens=set(tokenizer.all_special_tokens))
 
                 # TODO fuse batch output at the document level and compute accuracy
 
