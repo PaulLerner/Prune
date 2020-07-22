@@ -209,7 +209,7 @@ class SidNet(Module):
         memory = self.seq2seq.encoder(hidden_states, mask=None, src_key_padding_mask=src_key_padding_mask)
 
         # decode progressively starting from [CLS] token
-        for i in range(target_ids.shape[1]-1):
+        for i in range(1, target_ids.shape[1]-1):
             # embed targets using bert embeddings
             embedded_targets = self.bert.embeddings(target_ids)
             # reshape BertModel output like (sequence_length, batch_size, hidden_size)
