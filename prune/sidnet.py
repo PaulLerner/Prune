@@ -99,14 +99,17 @@ class SidNet(Module):
         self.encoder_num_layers = num_layers
         # 0 encoder layers (=) feed BERT output directly to self.linear
         if self.encoder_num_layers == 0:
-            TransformerEncoder = Identity
-        # init encoder_layer with the parameters
-        encoder_layer = TransformerEncoderLayer(self.hidden_size, nhead, dim_feedforward,
-                                                dropout, activation)
-        encoder_norm = LayerNorm(self.hidden_size)
-        # init encoder with encoder_layer
-        self.encoder = TransformerEncoder(encoder_layer, self.encoder_num_layers,
-                                          encoder_norm).to(device=DEVICES[-1])
+            self.encoder = Identity()
+        # else init encoder as usual
+        else:
+            # init encoder_layer with the parameters
+            encoder_layer = TransformerEncoderLayer(self.hidden_size, nhead, 
+                                                    dim_feedforward,
+                                                    dropout, activation)
+            encoder_norm = LayerNorm(self.hidden_size)
+            # init encoder with encoder_layer
+            self.encoder = TransformerEncoder(encoder_layer, self.encoder_num_layers,
+                                              encoder_norm).to(device=DEVICES[-1])
 
         # handle classification layer and weight-tying
         self.linear = Linear(self.hidden_size, self.vocab_size,
