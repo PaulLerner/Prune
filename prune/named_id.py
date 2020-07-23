@@ -19,7 +19,8 @@ Common options:
 
 Training options:
 --from=<epoch>       Start training back from a specific checkpoint (epoch #)
---augment=<ratio>    If greater than 0, will generate `augment` synthetic examples per real example
+--augment=<ratio>    If different from 0, will generate `|augment|` synthetic examples per real example
+                     If less than 0, will discard real example.
                      See batchify for details.
                      Defaults to no augmentation.
 
@@ -365,10 +366,10 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         Defaults to keep input as is.
     augment: int, optional
         Data augmentation ratio.
-        If greater than 0, will generate `augment` synthetic examples per real example
+        If different from 0, will generate `|augment|` synthetic examples per real example
         by replacing speaker names in input text and target by a random name.
         Note that it doesn't have any effect if no speaker names (as provided in mapping)
-        are present in the input text.
+        are present in the input text. If less than 0, will discard real example.
         Defaults to no augmentation.
     Returns
     -------
@@ -381,7 +382,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         mapping = json.load(file)
 
     # load list of names
-    if augment > 0:
+    if augment != 0:
         names = []
         for character_file in CHARACTERS_PATH:
             with open(character_file) as file:
@@ -441,12 +442,14 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             if easy and not any_in_text(target_set, text_window):
                 continue
 
-            text_windows.append(text_window)
-            audio_windows.append(audio[start:end])
-            target_windows.append(target_window)
+            # augment < 0 (=) discard real example
+            if augment >= 0:
+                text_windows.append(text_window)
+                audio_windows.append(audio[start:end])
+                target_windows.append(target_window)
 
             # add `augment` windows of synthetic data
-            for augmentation in range(augment):
+            for augmentation in range(abs(augment)):
                 synthetic_text = text_window
                 synthetic_targets = target_window
                 # augment data by replacing
