@@ -6,7 +6,8 @@ from typing import List
 import numpy as np
 
 from transformers import BertModel
-from torch.nn import Transformer, Module, Linear, LogSoftmax
+from torch.nn import TransformerEncoder, TransformerEncoderLayer, Module, Linear, \
+    LogSoftmax, LayerNorm, Identity
 from torch.cuda import device_count
 from torch import device
 
@@ -26,14 +27,23 @@ def total_params(module):
     return trainable, total
 
 
+def get_device(module):
+    """Returns device of the first parameter of the module,
+    or None if the module has no parameters
+    """
+    for p in module.parameters():
+        return p.device
+    return None
+
+
 class SidNet(Module):
     """Named-Speaker Identification Network
 
-    Should be very similar to a neural translation system although we translate from:
-        language -> speaker names
+    Identifies named-speakers in dialogues using Transformer Encoder's Self-attention
+
     Note that it's important that the target name is as written in the input text.
     Embeds input text using BERT (TODO make it more generic)
-    then learn the sequence-to-sequence translation using a Transformer
+    then identifies speakers using a Transformer Encoder
 
     Decisions can be weighed using audio embeddings
     (similar voices should be tagged similarly)
@@ -43,31 +53,56 @@ class SidNet(Module):
     bert: `str`, optional
         Model name or path, see BertTokenizer.from_pretrained
         Defaults to 'bert-base-cased'.
-    vocab_size: `int`, optional
-        Output dimension of the model (should be inferred from vocab_size of BertTokenizer)
-        Defaults to 28996
     audio: `Wrappable`, optional
         Describes how raw speaker embeddings should be obtained.
         See pyannote.audio.features.wrapper.Wrapper documentation for details.
         Defaults to None, indicating that the model should rely only on the text.
-    **kwargs:
-        Additional arguments are passed to self.seq2seq (torch.nn.Transformer)
+    num_layers: `int`, optional
+        The number of sub-encoder-layers in the encoder.
+        If set to 0 then self.encoder is Identity
+        I.e. Bert output is fed directly to the Linear layer.
+        Defaults to 6
+    nhead: `int`, optional
+        The number of heads in each encoder layer.
+        Defaults to 8
+    dim_feedforward: `int`, optional
+        The dimension of the feedforward network model (FFN) in each encoder layer.
+        Defaults to 2048
+    dropout: `float`, optional
+        The dropout rate in-between each block (attn or FFN) of each encoder layer
+        Defaults to 0.1
+    activation: `str`, optional
+        The activation function of intermediate layer of the FFN: 'relu' or 'gelu'
+         Defaults to 'relu'
 
     References
     ----------
     TODO
     """
 
-    def __init__(self, bert='bert-base-cased', audio=None, **kwargs):
+    def __init__(self, bert='bert-base-cased', audio=None, num_layers=6, nhead=8,
+                 dim_feedforward=2048, dropout=0.1, activation='relu'):
+
         super().__init__()
-        # put bert and output layer in the first device
-        # and the seq2seq in the last (hopefully another) one
+        # put bert in the first device
+        # and the encoder and output layer in the last (hopefully another) one
+
         self.bert = BertModel.from_pretrained(bert).to(device=DEVICES[0])
         self.hidden_size = self.bert.config.hidden_size
         self.vocab_size = self.bert.config.vocab_size
-        self.tgt_mask = None
-        self.seq2seq = Transformer(d_model=self.hidden_size, **kwargs).to(device=DEVICES[-1])
-        self.linear = Linear(self.hidden_size, self.vocab_size).to(device=DEVICES[0])
+        self.encoder_num_layers = num_layers
+        # 0 encoder layers (=) feed BERT output directly to self.linear
+        if self.encoder_num_layers == 0:
+            TransformerEncoder = Identity
+        # init encoder_layer with the parameters
+        encoder_layer = TransformerEncoderLayer(self.hidden_size, nhead, dim_feedforward,
+                                                dropout, activation)
+        encoder_norm = LayerNorm(self.hidden_size)
+        # init encoder with encoder_layer
+        self.encoder = TransformerEncoder(encoder_layer, self.encoder_num_layers,
+                                          encoder_norm).to(device=DEVICES[-1])
+
+        self.linear = Linear(self.hidden_size, self.vocab_size).to(device=DEVICES[-1])
         self.activation = LogSoftmax(dim=2)
 
     def freeze(self, names: List[str]):
@@ -100,25 +135,19 @@ class SidNet(Module):
                          f'{trainable:,d} ({total:,d} total)')
         return '\n'.join(lines)
 
-    def forward(self, input_ids, target_ids,
-                audio_similarity=None, src_key_padding_mask=None, tgt_key_padding_mask=None):
+    def forward(self, input_ids, audio_similarity=None, src_key_padding_mask=None):
         """Apply model
 
         Parameters
         ----------
         input_ids: Tensor
             (batch_size, max_length). Encoded input tokens using BertTokenizer
-        target_ids: Tensor
-            (batch_size, max_length). Encoded target tokens using BertTokenizer
         audio_similarity: Tensor, optional
             (batch_size, max_length, max_length). Similarity (e.g. cosine distance)
             between audio embeddings of words, aligned with target_ids.
             Defaults to None, indicating that the model should rely only on the text.
         src_key_padding_mask: Tensor, optional
             (batch_size, max_length). Used to mask input_ids.
-            Defaults to None (no masking).
-        tgt_key_padding_mask: Tensor, optional
-            (batch_size, max_length). Used to mask target_ids.
             Defaults to None (no masking).
 
         Returns
@@ -127,40 +156,30 @@ class SidNet(Module):
             (batch_size, max_length). Model's hypothesis encoded like input_ids
         """
         # manage devices
-        device_ = next(self.bert.parameters()).device
-        input_ids, target_ids = input_ids.to(device_), target_ids.to(device_)
+        device_ = get_device(self.bert)
+        input_ids = input_ids.to(device_)
         if src_key_padding_mask is not None:
             src_key_padding_mask = src_key_padding_mask.to(device_)
             
         # pass input text trough bert
         hidden_states = self.bert(input_ids, src_key_padding_mask)[0]
 
-        # embed targets using bert embeddings
-        embedded_targets = self.bert.embeddings(target_ids)
-
         # reshape BertModel output like (sequence_length, batch_size, hidden_size)
         # to fit torch.nn.Transformer and manage devices
-        device_ = next(self.seq2seq.parameters()).device
+        device_ = get_device(self.encoder)
         hidden_states = hidden_states.transpose(0, 1).to(device_)
-        embedded_targets = embedded_targets.transpose(0, 1).to(device_)
 
-        if self.tgt_mask is None or self.tgt_mask.shape[0] != len(embedded_targets):
-            self.tgt_mask = self.seq2seq.generate_square_subsequent_mask(
-                                len(embedded_targets)).to(device_)
         # convert HuggingFace mask to PyTorch mask and manage devices
         #     HuggingFace: 1    -> NOT MASKED, 0     -> MASKED
         #     PyTorch:     True -> MASKED,     False -> NOT MASKED
         if src_key_padding_mask is not None:
             src_key_padding_mask = ~src_key_padding_mask.bool().to(device_)
-        if tgt_key_padding_mask is not None:
-            tgt_key_padding_mask = ~tgt_key_padding_mask.bool().to(device_)
 
-        text_output = self.seq2seq(hidden_states, embedded_targets,
-                                   src_mask=None, tgt_mask=self.tgt_mask,
-                                   src_key_padding_mask=src_key_padding_mask,
-                                   tgt_key_padding_mask=tgt_key_padding_mask)
+        text_output = self.encoder(hidden_states, mask=None,
+                                   src_key_padding_mask=src_key_padding_mask)
+
         # manage devices
-        device_ = next(self.linear.parameters()).device
+        device_ = get_device(self.linear)
         text_output = self.linear(text_output.to(device_))
 
         # reshape output like (batch_size, sequence_length, vocab_size)
