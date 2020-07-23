@@ -74,18 +74,24 @@ class SidNet(Module):
     activation: `str`, optional
         The activation function of intermediate layer of the FFN: 'relu' or 'gelu'
          Defaults to 'relu'
+    tie_weights: `bool`, optional
+        Tie embedding and classification layer weights as in Press and Wolf, 2016.
+        This prohibits the use of an additive bias in the classification layer (FIXME),
+        at least because we don't want the weights and biases to be on 2 different devices.
 
     References
     ----------
-    TODO
+    Press, O., Wolf, L., 2016.
+    Using the output embedding to improve language models. arXivpreprint arXiv:1608.05859.
     """
 
     def __init__(self, bert='bert-base-cased', audio=None, num_layers=6, nhead=8,
-                 dim_feedforward=2048, dropout=0.1, activation='relu'):
+                 dim_feedforward=2048, dropout=0.1, activation='relu', tie_weights=False):
 
         super().__init__()
         # put bert in the first device
         # and the encoder and output layer in the last (hopefully another) one
+        # obviously, the output layer will end up on the first device if we're tying weights
 
         self.bert = BertModel.from_pretrained(bert).to(device=DEVICES[0])
         self.hidden_size = self.bert.config.hidden_size
@@ -102,7 +108,12 @@ class SidNet(Module):
         self.encoder = TransformerEncoder(encoder_layer, self.encoder_num_layers,
                                           encoder_norm).to(device=DEVICES[-1])
 
-        self.linear = Linear(self.hidden_size, self.vocab_size).to(device=DEVICES[-1])
+        # handle classification layer and weight-tying
+        self.linear = Linear(self.hidden_size, self.vocab_size,
+                             bias=not tie_weights).to(device=DEVICES[-1])
+        if tie_weights:
+            self.linear.weight = self.bert.embeddings.word_embeddings.weight
+
         self.activation = LogSoftmax(dim=2)
 
     def freeze(self, names: List[str]):
