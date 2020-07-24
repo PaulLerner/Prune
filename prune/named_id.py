@@ -373,6 +373,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             with open(character_file) as file:
                 names += [line.split(',')[3].split()[0]
                           for line in file.read().split("\n") if line != '']
+        names = np.array(names)
 
     batches = []
     text_windows, audio_windows, target_windows = [], [], []
