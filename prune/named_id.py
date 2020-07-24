@@ -192,7 +192,7 @@ def eval(batches, model, tokenizer, log_dir,
                     eg = np.random.randint(len(tgt))
                     inp_eg, tgt_eg, pred_eg = inp[eg].split(), tgt[eg].split(), predictions[eg].split()
                     step = 10
-                    for i in range(0, len(inp) - step, step):
+                    for i in range(0, len(inp_eg) - step, step):
                         tab = tabulate((inp_eg[i:i + step], tgt_eg[i:i + step], pred_eg[i:i + step])).split('\n')
                         print('\n'.join(tab[1:]))
                     # print current metrics
