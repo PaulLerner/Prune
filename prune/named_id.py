@@ -118,7 +118,7 @@ def eval(batches, model, tokenizer, log_dir,
     Parameters
     ----------
     batches: List[Tuple[Tensor]]:
-        (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        (text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
     model: SidNet
         instance of SidNet, ready to be loaded
@@ -207,7 +207,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     Parameters
     ----------
     batches: List[Tuple[Tensor]]
-        (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        (text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
     model: SidNet
         instance of SidNet, ready to be trained
@@ -359,7 +359,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
     Returns
     -------
     batches: List[Tuple[Tensor]]:
-        (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        (text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
@@ -413,9 +413,8 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                 tokens.append(token)
                 targets.append(target)
                 audio.append(segment)
-
+                end += 1
             previous_speaker = word._.speaker
-            end += 1
         windows.pop(0)
 
         # slide through the transcription speaker turns w.r.t. window_size, step_size
