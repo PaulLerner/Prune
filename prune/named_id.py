@@ -45,7 +45,7 @@ It should look like:
 
 architecture:
     nhead: 8
-    num_encoder_layers: 6
+    num_layers: 6
     dropout: 0.1
 training:
     lr: 0.001
