@@ -408,7 +408,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             target = mapping.get(word._.speaker, tokenizer.pad_token)
 
             # handle basic tokenization (e.g. punctuation) before Word-Piece in order to align input text and speakers
-            for token in tokenizer.basic_tokenizer.tokenize(token.text):
+            for token in tokenizer.basic_tokenizer.tokenize(word.text):
                 tokens.append(token)
                 targets.append(target)
                 audio.append(segment)
