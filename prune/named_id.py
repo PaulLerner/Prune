@@ -111,6 +111,18 @@ def batch_word_accuracy(targets: List[str], predictions: List[str]):
     return correct/total
 
 
+def str_example(inp, tgt, predictions, eg=None, step=20):
+    eg = np.random.randint(len(tgt)) if eg is None else eg
+    example = []
+    inp_eg, tgt_eg, pred_eg = inp[eg].split(), tgt[eg].split(), predictions[eg].split()
+    for i in range(0, len(inp_eg) - step, step):
+        tab = tabulate((['inp:'] + inp_eg[i:i + step],
+                        ['tgt:'] + tgt_eg[i:i + step],
+                        ['hyp:'] + pred_eg[i:i + step])).split('\n')
+        example += tab[1:]
+    return '\n'.join(example)
+
+
 def eval(batches, model, tokenizer, log_dir,
          test=False, evergreen=False, interactive=False):
     """Load model from checkpoint and evaluate it on batches.
@@ -189,12 +201,8 @@ def eval(batches, model, tokenizer, log_dir,
 
                 if interactive:
                     # print random example
-                    eg = np.random.randint(len(tgt))
-                    inp_eg, tgt_eg, pred_eg = inp[eg].split(), tgt[eg].split(), predictions[eg].split()
-                    step = 10
-                    for i in range(0, len(inp_eg) - step, step):
-                        tab = tabulate((inp_eg[i:i + step], tgt_eg[i:i + step], pred_eg[i:i + step])).split('\n')
-                        print('\n'.join(tab[1:]))
+                    print(str_example(inp, tgt, predictions))
+
                     # print current metrics
                     metrics = {
                         'Loss/eval': [epoch_loss],
