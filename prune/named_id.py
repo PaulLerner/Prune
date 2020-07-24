@@ -58,6 +58,7 @@ from pathlib import Path
 import json
 import yaml
 import warnings
+from typing import List
 
 from pyannote.core import Segment
 from pyannote.database import get_protocol
@@ -87,26 +88,26 @@ DATA_PATH = Path(PC.__file__).parent / 'data'
 CHARACTERS_PATH = DATA_PATH.glob('*/characters.txt')
 
 
-def batch_accuracy(targets, predictions, pad=0):
+def batch_token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
     """Compute accuracy at the batch level.
-    Should work the same with torch and np.
     Ignores padded targets.
     """
 
     indices = targets != pad
-    where = predictions[indices] == targets[indices]
+    where = (predictions[indices] == targets[indices]).nonzero(as_tuple=True)
 
-    # switch between torch and np
-    if isinstance(where, Tensor):
-        where = where.nonzero(as_tuple=True)
-        total = indices.nonzero(as_tuple=True)
-    else:
-        where = where.nonzero()
-        total = indices.nonzero()
+    return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
-    batch_acc = where[0].shape[0] / total[0].shape[0]
 
-    return batch_acc
+def batch_word_accuracy(targets: List[str], predictions: List[str]):
+    correct, total = 0, 0
+    for target, prediction in zip(targets, predictions):
+        target, prediction = target.split(), prediction.split()
+        total += len(target)
+        for t, p in zip(target, prediction):
+            if t == p:
+                correct += 1
+    return correct/total
 
 
 def eval(batches, model, tokenizer, log_dir,
@@ -158,7 +159,7 @@ def eval(batches, model, tokenizer, log_dir,
         model.eval()
         with no_grad():
             epoch_loss, epoch_token_acc, epoch_word_acc = 0., 0., 0.
-            for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+            for inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass
                 output = model(input_ids, target_ids, audio_similarity,
                                src_key_padding_mask, tgt_key_padding_mask)
@@ -166,15 +167,14 @@ def eval(batches, model, tokenizer, log_dir,
                 target_ids = target_ids.to(output.device)
 
                 # get model prediction per token
-                predictions = argmax(output, dim=2)
+                prediction_ids = argmax(output, dim=2)
 
                 # compute batch-token accuracy
-                epoch_token_acc += batch_accuracy(target_ids, predictions, tokenizer.pad_token_id)
+                epoch_token_acc += batch_token_accuracy(target_ids, prediction_ids, tokenizer.pad_token_id)
 
                 # decode and compute word accuracy
-                decoded_targets = batch2numpy(tokenizer, target_ids)
-                decoded_predictions = batch2numpy(tokenizer, predictions)
-                epoch_word_acc += batch_accuracy(decoded_targets, decoded_predictions, tokenizer.pad_token)
+                predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
+                epoch_word_acc += batch_word_accuracy(tgt, predictions)
 
                 # TODO fuse batch output at the document level and compute accuracy
 
@@ -268,7 +268,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         np.random.shuffle(batches)
 
         epoch_loss = 0.
-        for input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+        for _, _, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
             optimizer.zero_grad()
 
             # forward pass
@@ -299,21 +299,6 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
             }, weights_path / EPOCH_FORMAT.format(epoch))
 
     return model, optimizer
-
-
-def batch2numpy(tokenizer, batch):
-    """Decode batch to list of string using tokenizer
-    then reshape the list of str to a np array of tokens"""
-
-    decoded = tokenizer.batch_decode(batch)
-    decoded_list = []
-    for line in decoded:
-        # trim sequence to max length
-        line = line.split()[:max_length]
-        # pad sequence to max_length
-        line += [tokenizer.pad_token] * (max_length - len(line))
-        decoded_list.append(line)
-    return np.array(decoded_list, dtype=str)
 
 
 def any_in_text(items, text):
@@ -377,7 +362,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
     """
-
+    assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
     with open(mapping) as file:
         mapping = json.load(file)
 
@@ -402,8 +387,8 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         start, end = 0, 0
         tokens, audio, targets = [], [], []
         previous_speaker = None
-        for token in transcription:
-            if token._.speaker != previous_speaker:
+        for word in transcription:
+            if word._.speaker != previous_speaker:
                 # mark speaker change with special token tokenizer.sep_token ("[SEP]")
                 if sep_change:
                     tokens.append(tokenizer.sep_token)
@@ -412,17 +397,24 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                     end += 1
                 windows.append((start, end))
                 start = end
-            tokens.append(token.text)
-            # if audio alignment is not confident for token
-            # then audio similarity matrix of token should be uniform
+
+            # if audio alignment is not confident for word
+            # then audio similarity matrix of word should be uniform
             # so it doesn't weigh on the text decision
-            if token._.confidence > 0.5 and '#unknown#' not in token._.speaker:
-                audio.append(Segment(token._.time_start, token._.time_end))
+            if word._.confidence > 0.5 and '#unknown#' not in word._.speaker:
+                segment = Segment(word._.time_start, word._.time_end)
             else:
-                audio.append(tokenizer.pad_token)
+                segment = tokenizer.pad_token
             # if we don't have a proper target we should mask the loss function
-            targets.append(mapping.get(token._.speaker, tokenizer.pad_token))
-            previous_speaker = token._.speaker
+            target = mapping.get(word._.speaker, tokenizer.pad_token)
+
+            # handle basic tokenization (e.g. punctuation) before Word-Piece in order to align input text and speakers
+            for token in tokenizer.basic_tokenizer.tokenize(token.text):
+                tokens.append(token)
+                targets.append(target)
+                audio.append(segment)
+
+            previous_speaker = word._.speaker
             end += 1
         windows.pop(0)
 
@@ -482,7 +474,9 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             # audio_batch.append(audio_windows[j])
         # encode batch (i.e. tokenize, tensorize...)
         batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch, mask=mask)
-        batches.append(batch)
+        # append original text and target to be able to evaluate
+        # (FIXME: this might add extra memory usage, unnecessary to train the model)
+        batches.append((text_batch, target_batch) + batch)
     return batches
 
 
@@ -598,7 +592,8 @@ if __name__ == '__main__':
 
     # instantiate tokenizer
     tokenizer = BertTokenizer.from_pretrained(BERT)
-
+    # override basic-tokenization parameter as we need to align speakers with input tokens
+    tokenizer.do_basic_tokenize = False
     # get batches from protocol subset
     batches = batchify(tokenizer, protocol, mapping, subset,
                        batch_size=batch_size,
