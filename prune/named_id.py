@@ -59,6 +59,7 @@ import json
 import yaml
 import warnings
 from typing import List
+from tabulate import tabulate
 
 from pyannote.core import Segment
 from pyannote.database import get_protocol
@@ -187,6 +188,20 @@ def eval(batches, model, tokenizer, log_dir,
                 epoch_loss += loss.item()
 
                 if interactive:
+                    # print random example
+                    eg = np.random.randint(len(tgt))
+                    inp_eg, tgt_eg, pred_eg = inp[eg].split(), tgt[eg].split(), predictions[eg].split()
+                    step = 10
+                    for i in range(0, len(inp) - step, step):
+                        tab = tabulate((inp_eg[i:i + step], tgt_eg[i:i + step], pred_eg[i:i + step])).split('\n')
+                        print('\n'.join(tab[1:]))
+                    # print current metrics
+                    metrics = {
+                        'Loss/eval': [epoch_loss],
+                        'Accuracy/eval/batch/token': [epoch_token_acc],
+                        'Accuracy/eval/batch/word': [epoch_word_acc]
+                    }
+                    print(tabulate(metrics, headers='keys'))
                     breakpoint()
 
             tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
