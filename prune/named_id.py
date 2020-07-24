@@ -59,6 +59,7 @@ import json
 import yaml
 import warnings
 from typing import List
+from tabulate import tabulate
 
 from pyannote.core import Segment
 from pyannote.database import get_protocol
@@ -118,7 +119,7 @@ def eval(batches, model, tokenizer, log_dir,
     Parameters
     ----------
     batches: List[Tuple[Tensor]]:
-        (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        (text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
     model: SidNet
         instance of SidNet, ready to be loaded
@@ -187,6 +188,20 @@ def eval(batches, model, tokenizer, log_dir,
                 epoch_loss += loss.item()
 
                 if interactive:
+                    # print random example
+                    eg = np.random.randint(len(tgt))
+                    inp_eg, tgt_eg, pred_eg = inp[eg].split(), tgt[eg].split(), predictions[eg].split()
+                    step = 10
+                    for i in range(0, len(inp_eg) - step, step):
+                        tab = tabulate((inp_eg[i:i + step], tgt_eg[i:i + step], pred_eg[i:i + step])).split('\n')
+                        print('\n'.join(tab[1:]))
+                    # print current metrics
+                    metrics = {
+                        'Loss/eval': [epoch_loss],
+                        'Accuracy/eval/batch/token': [epoch_token_acc],
+                        'Accuracy/eval/batch/word': [epoch_word_acc]
+                    }
+                    print(tabulate(metrics, headers='keys'))
                     breakpoint()
 
             tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
@@ -207,7 +222,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     Parameters
     ----------
     batches: List[Tuple[Tensor]]
-        (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        (text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
     model: SidNet
         instance of SidNet, ready to be trained
@@ -289,7 +304,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
 
         tb.add_scalar('Loss/train', epoch_loss/len(batches), epoch)
 
-        if epoch % save_every == 0:
+        if (epoch+1) % save_every == 0:
             save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -358,7 +373,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
     Returns
     -------
     batches: List[Tuple[Tensor]]:
-        (input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        (text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
         see batch_encode_multi
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
@@ -372,6 +387,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             with open(character_file) as file:
                 names += [line.split(',')[3].split()[0]
                           for line in file.read().split("\n") if line != '']
+        names = np.array(names)
 
     batches = []
     text_windows, audio_windows, target_windows = [], [], []
@@ -412,9 +428,8 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                 tokens.append(token)
                 targets.append(target)
                 audio.append(segment)
-
+                end += 1
             previous_speaker = word._.speaker
-            end += 1
         windows.pop(0)
 
         # slide through the transcription speaker turns w.r.t. window_size, step_size
