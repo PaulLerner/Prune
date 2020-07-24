@@ -290,7 +290,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
 
         tb.add_scalar('Loss/train', epoch_loss/len(batches), epoch)
 
-        if epoch % save_every == 0:
+        if (epoch+1) % save_every == 0:
             save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
