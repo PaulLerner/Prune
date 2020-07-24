@@ -9,7 +9,7 @@ from transformers import BertModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, Module, Linear, \
     LogSoftmax, LayerNorm, Identity
 from torch.cuda import device_count
-from torch import device
+from torch import device, Tensor
 
 
 DEVICES = [device('cpu')] if device_count() == 0 else \
@@ -34,6 +34,15 @@ def get_device(module):
     for p in module.parameters():
         return p.device
     return None
+
+
+class Identity(Identity):
+    """Same as torch.nn.Identity but supports additional arguments
+    as proposed in https://github.com/pytorch/pytorch/issues/42015
+    """
+
+    def forward(self, input: Tensor, *args, **kwargs) -> Tensor:
+        return input
 
 
 class SidNet(Module):
