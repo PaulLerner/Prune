@@ -438,12 +438,13 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                 audio.append(segment)
                 end += 1
             previous_speaker = word._.speaker
+        windows.append((start, end))
         windows.pop(0)
 
         # slide through the transcription speaker turns w.r.t. window_size, step_size
         # filter out windows w.r.t. easy
         # and augment them w.t.t. augment
-        for i in range(0, len(windows) - window_size, step_size):
+        for i in range(0, len(windows) - window_size + 1, step_size):
             start, _ = windows[i]
             _, end = windows[i + window_size - 1]
             text_window = " ".join(tokens[start:end])
@@ -487,7 +488,8 @@ def batchify(tokenizer, protocol, mapping, subset='train',
     np.random.shuffle(indices)
 
     # split windows in batches w.r.t. batch_size 
-    for i in tqdm(range(0, len(indices) - batch_size, batch_size), desc='Encoding batches'):
+    for i in tqdm(range(0, len(indices) - batch_size + 1, batch_size), 
+                  desc='Encoding batches'):
         text_batch, target_batch, audio_batch = [], [], None
         for j in indices[i: i + batch_size]:
             text_batch.append(text_windows[j])
