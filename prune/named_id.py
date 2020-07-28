@@ -70,7 +70,7 @@ import Plumcot as PC
 import re
 import numpy as np
 
-from torch import save, load, manual_seed, no_grad, argmax, Tensor
+from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
@@ -91,8 +91,8 @@ DATA_PATH = Path(PC.__file__).parent / 'data'
 CHARACTERS_PATH = DATA_PATH.glob('*/characters.txt')
 
 
-def batch_token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
-    """Compute accuracy at the batch level.
+def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
+    """Compute accuracy at the token level.
     Ignores padded targets.
     """
 
@@ -126,7 +126,7 @@ def str_example(inp, tgt, predictions, eg=None, step=20):
 
 
 def eval(batches, model, tokenizer, log_dir,
-         test=False, evergreen=False, interactive=False):
+         test=False, evergreen=False, interactive=False, step_size=1):
     """Load model from checkpoint and evaluate it on batches.
     When testing, only the best model should be tested.
 
@@ -153,6 +153,9 @@ def eval(batches, model, tokenizer, log_dir,
     interactive: bool, optional
         Opens-up python debugger after each forward pass.
         Defaults to False.
+    step_size: int, optional
+        Overlap between two subsequent text-windows (i.e. item in batch)
+        Defaults to 1.
     """
 
     if test:
@@ -174,18 +177,58 @@ def eval(batches, model, tokenizer, log_dir,
         model.eval()
         with no_grad():
             epoch_loss, epoch_token_acc, epoch_word_acc = 0., 0., 0.
-            for uri, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+            uris, file_token_acc, file_word_acc = [], [], []
+            previous_uri = None
+            for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass
                 output = model(input_ids, audio_similarity, tgt_key_padding_mask)
-
                 # manage devices
                 target_ids = target_ids.to(output.device)
+
+                # handle file-level stuff
+                if uri != previous_uri:
+                    # compute file-level accuracy
+                    if previous_uri is not None:
+                        file_pred_ids = argmax(file_output, dim=2)
+
+                        # compute token accuracy
+                        file_token_acc.append(token_accuracy(file_target_ids,
+                                                             file_pred_ids,
+                                                             tokenizer.pad_token_id))
+
+                        # decode and compute word accuracy
+                        file_target = tokenizer.batch_decode(file_target_ids,
+                                                             clean_up_tokenization_spaces=False)
+                        file_pred = tokenizer.batch_decode(file_pred_ids,
+                                                           clean_up_tokenization_spaces=False)
+                        file_word_acc.append(batch_word_accuracy([file_target], [file_pred]))
+
+                        # TODO audio ER
+
+                    # reset file-level variables
+                    file_length = windows[-1][-1] - windows[0][0]
+                    i = 0
+                    file_output = zeros((file_length, model.vocab_size),
+                                        dtype=output.dtype,
+                                        device=output.device)
+                    file_target_ids = zeros((file_length,),
+                                            dtype=target_ids.dtype,
+                                            device=target_ids.device)
+
+                # save target and output for future file-level accuracy
+                for t, o in zip(target_ids, output):
+                    for start, end in windows[i: i+output.shape[0]]:
+                        # shift between batch and original file
+                        shift = i * output.shape[0]
+                        file_target_ids[start: end] = t[start-shift: end-shift]
+                        file_output[start: end] += o[start-shift: end-shift]
+                        i += step_size
 
                 # get model prediction per token
                 prediction_ids = argmax(output, dim=2)
 
                 # compute batch-token accuracy
-                epoch_token_acc += batch_token_accuracy(target_ids, prediction_ids, tokenizer.pad_token_id)
+                epoch_token_acc += token_accuracy(target_ids, prediction_ids, tokenizer.pad_token_id)
 
                 # decode and compute word accuracy
                 predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
@@ -214,6 +257,17 @@ def eval(batches, model, tokenizer, log_dir,
                     print(tabulate(metrics, headers='keys'))
                     breakpoint()
 
+            # average and print file-accuracies
+            uris.append('TOTAL')
+            file_token_acc.append(np.mean(file_token_acc))
+            file_word_acc.append(np.mean(file_word_acc))
+            results = tabulate(zip(uris, file_token_acc, file_word_acc),
+                               headers=['uri', 'token-level', 'word-level'])
+            print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
+
+            # log tensorboard
+            tb.add_scalar('Accuracy/eval/file/token', file_token_acc[-1], epoch)
+            tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
             tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
             tb.add_scalar('Accuracy/eval/batch/token', epoch_token_acc / len(batches), epoch)
             epoch_word_acc /= len(batches)
@@ -293,7 +347,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         np.random.shuffle(batches)
 
         epoch_loss = 0.
-        for _, _, _, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+        for _, _, _, _, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
             optimizer.zero_grad()
 
             # forward pass
@@ -389,11 +443,14 @@ def batchify(tokenizer, protocol, mapping, subset='train',
 
     Yields
     -------
-    batch: Tuple[str, List[str], Tensor]:
-        (uri, text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
-        see batch_encode_multi.
-        uri is the file-identifier of the batch and is set to None if shuffle, as batch
-        are then file-heterogeneous
+    batch: Tuple[str, List[Tuple[int]], List[str], Tensor]:
+        (uri, windows, text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        - see batch_encode_multi.
+        - uri: str,
+          file-identifier of the batch and is set to None if shuffle, as batch
+          are then file-heterogeneous
+        - windows: List[Tuple[int]]
+          indices of the start and end tokens index of the speaker turns in the batch
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
     with open(mapping) as file:
@@ -502,7 +559,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             for batch in batchify_windows(tokenizer, text_windows, target_windows,
                                           audio_windows, indices,
                                           batch_size=batch_size, mask=mask):
-                yield (uri,) + batch
+                yield (uri, windows) + batch
     if shuffle:
         # shuffle all windows
         indices = np.arange(len(text_windows))
@@ -510,7 +567,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         for batch in batchify_windows(tokenizer, text_windows, target_windows,
                                       audio_windows, indices,
                                       batch_size=batch_size, mask=mask):
-            yield (None,) + batch
+            yield (None, None) + batch
 
 
 def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, indices,
@@ -696,7 +753,7 @@ if __name__ == '__main__':
 
         model = SidNet(BERT, **config.get('architecture', {}))
         eval(batches, model, tokenizer, validate_dir,
-             test=False, evergreen=evergreen, interactive=interactive)
+             test=False, evergreen=evergreen, interactive=interactive, step_size=step_size)
 
     elif args['test']:
         subset = args['--subset'] if args['--subset'] else 'test'
@@ -716,6 +773,7 @@ if __name__ == '__main__':
         config = load_config(test_dir.parents[2])
 
         model = SidNet(BERT, **config.get('architecture', {}))
-        eval(batches, model, tokenizer, test_dir, test=True, interactive=interactive)
+        eval(batches, model, tokenizer, test_dir,
+             test=True, interactive=interactive, step_size=step_size)
 
 
