@@ -449,7 +449,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         - uri: str,
           file-identifier of the batch and is set to None if shuffle, as batch
           are then file-heterogeneous
-        - windows: List[Tuple[int]]
+        - batch_windows: List[Tuple[int]]
           indices of the start and end tokens index of the speaker turns in the batch
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
@@ -470,7 +470,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
     # iterate over protocol subset
     for current_file in tqdm(getattr(protocol, subset)(), desc='Loading transcriptions'):
         if not shuffle:
-            text_windows, audio_windows, target_windows = [], [], []
+            batch_windows, text_windows, audio_windows, target_windows = [], [], [], []
         transcription = current_file['transcription']
         uri = current_file['uri']
 
@@ -511,6 +511,12 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             previous_speaker = word._.speaker
         windows.append((start, end))
         windows.pop(0)
+
+        # compute token windows in the batch
+        if not shuffle:
+            for start, end in windows:
+                tokenized = tokenizer.tokenize(" ".join(targets[start:end]))
+                batch_windows.append((start, start+len(tokenized)))
 
         # slide through the transcription speaker turns w.r.t. window_size, step_size
         # filter out windows w.r.t. easy
@@ -559,7 +565,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             for batch in batchify_windows(tokenizer, text_windows, target_windows,
                                           audio_windows, indices,
                                           batch_size=batch_size, mask=mask):
-                yield (uri, windows) + batch
+                yield (uri, batch_windows) + batch
     if shuffle:
         # shuffle all windows
         indices = np.arange(len(text_windows))
