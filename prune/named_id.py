@@ -8,7 +8,9 @@ named_id.py test <protocol> <validate_dir> [options] [--interactive]
 
 Common options:
 
---subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test' [default: train]
+--subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test'.
+                     Defaults to 'train', 'development' and 'test' in
+                     'train', 'validate', and 'test' mode, respectively.
 --batch=<batch>		 Batch size [default: 128]
 --window=<window>	 Window size [default: 8]
 --step=<step>		 Step size [default: 1]
@@ -172,7 +174,7 @@ def eval(batches, model, tokenizer, log_dir,
         model.eval()
         with no_grad():
             epoch_loss, epoch_token_acc, epoch_word_acc = 0., 0., 0.
-            for inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+            for uri, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass
                 output = model(input_ids, audio_similarity, tgt_key_padding_mask)
 
@@ -291,7 +293,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         np.random.shuffle(batches)
 
         epoch_loss = 0.
-        for _, _, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+        for _, _, _, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
             optimizer.zero_grad()
 
             # forward pass
@@ -336,7 +338,7 @@ def any_in_text(items, text):
 
 def batchify(tokenizer, protocol, mapping, subset='train',
              batch_size=128, window_size=10, step_size=1,
-             mask=True, easy=False, sep_change=False, augment=0):
+             mask=True, easy=False, sep_change=False, augment=0, shuffle=True):
     """
     Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
@@ -355,6 +357,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         subset of the protocol to get transcription from
         Defaults to training set.
     batch_size: int, optional
+        Remainder batch (of size <= batch_size) is kept.
         Defaults to 128.
     window_size: int, optional
         Number of speaker turns in one window
@@ -378,11 +381,19 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         Note that it doesn't have any effect if no speaker names (as provided in mapping)
         are present in the input text. If less than 0, will discard real example.
         Defaults to no augmentation.
-    Returns
+    shuffle: bool, optional
+        Whether to shuffle windows before batching.
+        Should be set to False when testing to get file-homogeneous batches,
+        and to True while training to ensure stochasticity.
+        Defaults to True
+
+    Yields
     -------
-    batches: List[Tuple[Tensor]]:
-        (text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
-        see batch_encode_multi
+    batch: Tuple[str, List[str], Tensor]:
+        (uri, text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        see batch_encode_multi.
+        uri is the file-identifier of the batch and is set to None if shuffle, as batch
+        are then file-heterogeneous
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
     with open(mapping) as file:
@@ -397,12 +408,14 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                           for line in file.read().split("\n") if line != '']
         names = np.array(names)
 
-    batches = []
     text_windows, audio_windows, target_windows = [], [], []
 
     # iterate over protocol subset
     for current_file in tqdm(getattr(protocol, subset)(), desc='Loading transcriptions'):
+        if not shuffle:
+            text_windows, audio_windows, target_windows = [], [], []
         transcription = current_file['transcription']
+        uri = current_file['uri']
 
         # format transcription into 3 lists: tokens, audio, targets
         # and segment it in speaker turns (i.e. speaker homogeneous)
@@ -431,7 +444,8 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             # if we don't have a proper target we should mask the loss function
             target = mapping.get(word._.speaker, tokenizer.pad_token)
 
-            # handle basic tokenization (e.g. punctuation) before Word-Piece in order to align input text and speakers
+            # handle basic tokenization (e.g. punctuation) before Word-Piece
+            # in order to align input text and speakers
             for token in tokenizer.basic_tokenizer.tokenize(word.text):
                 tokens.append(token)
                 targets.append(target)
@@ -482,14 +496,37 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                 audio_windows.append(audio[start:end])
                 text_windows.append(synthetic_text)
                 target_windows.append(synthetic_targets)
+        # yield file-homogeneous batches along with file-uri
+        if not shuffle:
+            indices = np.arange(len(text_windows))
+            for batch in batchify_windows(tokenizer, text_windows, target_windows,
+                                          audio_windows, indices,
+                                          batch_size=batch_size, mask=mask):
+                yield (uri,) + batch
+    if shuffle:
+        # shuffle all windows
+        indices = np.arange(len(text_windows))
+        np.random.shuffle(indices)
+        for batch in batchify_windows(tokenizer, text_windows, target_windows,
+                                      audio_windows, indices,
+                                      batch_size=batch_size, mask=mask):
+            yield (None,) + batch
 
-    # shuffle all windows
-    indices = np.arange(len(text_windows))
-    np.random.shuffle(indices)
 
-    # split windows in batches w.r.t. batch_size 
-    for i in tqdm(range(0, len(indices) - batch_size + 1, batch_size), 
-                  desc='Encoding batches'):
+def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, indices,
+                     batch_size=128, mask=True):
+    """
+    Parameters
+    ----------
+    see batchify
+
+    Yields
+    -------
+    see batch_encode_multi
+    """
+    # split windows in batches w.r.t. batch_size
+    # keep remainder (i.e. last batch of size <= batch_size)
+    for i in tqdm(range(0, len(indices), batch_size), desc='Encoding batches'):
         text_batch, target_batch, audio_batch = [], [], None
         for j in indices[i: i + batch_size]:
             text_batch.append(text_windows[j])
@@ -497,11 +534,11 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             # TODO integrate audio
             # audio_batch.append(audio_windows[j])
         # encode batch (i.e. tokenize, tensorize...)
-        batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch, mask=mask)
+        batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch,
+                                   mask=mask)
         # append original text and target to be able to evaluate
         # (FIXME: this might add extra memory usage, unnecessary to train the model)
-        batches.append((text_batch, target_batch) + batch)
-    return batches
+        yield (text_batch, target_batch) + batch
 
 
 def batch_encode_plus(tokenizer, text_batch, mask=True):
@@ -600,7 +637,6 @@ if __name__ == '__main__':
     # parse arguments and get protocol
     args = docopt(__doc__)
     protocol_name = args['<protocol>']
-    subset = args['--subset'] if args['--subset'] else 'train'
     batch_size = int(args['--batch']) if args['--batch'] else 128
     window_size = int(args['--window']) if args['--window'] else 8
     step_size = int(args['--step']) if args['--step'] else 1
@@ -611,26 +647,27 @@ if __name__ == '__main__':
     augment = int(args['--augment']) if args['--augment'] else 0
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
-    full_name = f'{protocol_name}.{subset}'
     mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
 
     # instantiate tokenizer
     tokenizer = BertTokenizer.from_pretrained(BERT)
     # override basic-tokenization parameter as we need to align speakers with input tokens
     tokenizer.do_basic_tokenize = False
-    # get batches from protocol subset
-    batches = batchify(tokenizer, protocol, mapping, subset,
-                       batch_size=batch_size,
-                       window_size=window_size,
-                       step_size=step_size,
-                       mask=mask,
-                       easy=easy,
-                       sep_change=sep_change,
-                       augment=augment)
 
     if args['train']:
+        subset = args['--subset'] if args['--subset'] else 'train'
+        # get batches from protocol subset
+        batches = list(batchify(tokenizer, protocol, mapping, subset,
+                                batch_size=batch_size,
+                                window_size=window_size,
+                                step_size=step_size,
+                                mask=mask,
+                                easy=easy,
+                                sep_change=sep_change,
+                                augment=augment,
+                                shuffle=True))
         start_epoch = int(args['--from']) if args['--from'] else None
-        train_dir = Path(args['<experiment_dir>'], full_name)
+        train_dir = Path(args['<experiment_dir>'], f'{protocol_name}.{subset}')
         train_dir.mkdir(exist_ok=True)
         config = load_config(train_dir.parents[0])
 
@@ -640,9 +677,20 @@ if __name__ == '__main__':
                                  **config.get('training', {}))
 
     elif args['validate']:
+        subset = args['--subset'] if args['--subset'] else 'development'
+        # get batches from protocol subset
+        batches = list(batchify(tokenizer, protocol, mapping, subset,
+                                batch_size=batch_size,
+                                window_size=window_size,
+                                step_size=step_size,
+                                mask=mask,
+                                easy=easy,
+                                sep_change=sep_change,
+                                augment=augment,
+                                shuffle=False))
         evergreen = args['--evergreen']
         interactive = args['--interactive']
-        validate_dir = Path(args['<train_dir>'], full_name)
+        validate_dir = Path(args['<train_dir>'], f'{protocol_name}.{subset}')
         validate_dir.mkdir(exist_ok=True)
         config = load_config(validate_dir.parents[1])
 
@@ -651,8 +699,19 @@ if __name__ == '__main__':
              test=False, evergreen=evergreen, interactive=interactive)
 
     elif args['test']:
+        subset = args['--subset'] if args['--subset'] else 'test'
+        # get batches from protocol subset
+        batches = list(batchify(tokenizer, protocol, mapping, subset,
+                                batch_size=batch_size,
+                                window_size=window_size,
+                                step_size=step_size,
+                                mask=mask,
+                                easy=easy,
+                                sep_change=sep_change,
+                                augment=augment,
+                                shuffle=False))
         interactive = args['--interactive']
-        test_dir = Path(args['<validate_dir>'], full_name)
+        test_dir = Path(args['<validate_dir>'], f'{protocol_name}.{subset}')
         test_dir.mkdir(exist_ok=True)
         config = load_config(test_dir.parents[2])
 
