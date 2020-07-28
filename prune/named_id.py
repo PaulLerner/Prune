@@ -62,6 +62,7 @@ import yaml
 import warnings
 from typing import List
 from tabulate import tabulate
+from itertools import zip_longest
 
 from pyannote.core import Segment
 from pyannote.database import get_protocol
@@ -102,14 +103,16 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
     return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
 
-def batch_word_accuracy(targets: List[str], predictions: List[str]):
+def batch_word_accuracy(targets: List[str], predictions: List[str], pad='[PAD]'):
     correct, total = 0, 0
     for target, prediction in zip(targets, predictions):
         target, prediction = target.split(), prediction.split()
-        total += len(target)
-        for t, p in zip(target, prediction):
+        for t, p in zip_longest(target, prediction):
+            if t == pad:
+                continue
             if t == p:
                 correct += 1
+            total += 1
     return correct/total
 
 
@@ -201,7 +204,8 @@ def eval(batches, model, tokenizer, log_dir,
                                                              clean_up_tokenization_spaces=False)
                         file_pred = tokenizer.batch_decode(file_pred_ids,
                                                            clean_up_tokenization_spaces=False)
-                        file_word_acc.append(batch_word_accuracy([file_target], [file_pred]))
+                        file_word_acc.append(batch_word_accuracy([file_target], [file_pred],
+                                                                 pad=tokenizer.pad_token))
 
                         # TODO audio ER
 
@@ -232,7 +236,7 @@ def eval(batches, model, tokenizer, log_dir,
 
                 # decode and compute word accuracy
                 predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
-                epoch_word_acc += batch_word_accuracy(tgt, predictions)
+                epoch_word_acc += batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
 
                 # TODO fuse batch output at the document level and compute accuracy
 
