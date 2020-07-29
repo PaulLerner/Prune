@@ -285,14 +285,16 @@ def eval(batches, model, tokenizer, log_dir,
             file_word_acc.append(batch_word_accuracy(file_target, file_pred,
                                                      pad=tokenizer.pad_token))
 
-            # average and print file-accuracies
+            # average file-accuracies
             uris.append('TOTAL')
             file_token_acc.append(np.mean(file_token_acc))
             file_word_acc.append(np.mean(file_word_acc))
-            results = tabulate(zip(uris, file_token_acc, file_word_acc),
-                               headers=['uri', 'token-level', 'word-level'],
-                               tablefmt='latex')
-            print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
+            # print file-accuracies
+            if test:
+                results = tabulate(zip(uris, file_token_acc, file_word_acc),
+                                   headers=['uri', 'token-level', 'word-level'],
+                                   tablefmt='latex')
+                print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
 
             # log tensorboard
             tb.add_scalar('Accuracy/eval/file/token', file_token_acc[-1], epoch)
