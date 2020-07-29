@@ -163,7 +163,7 @@ def eval(batches, model, tokenizer, log_dir,
     if test:
         weights_path = log_dir.parents[1] / 'weights'
         with open(log_dir.parent / 'params.yml') as file:
-            epoch = yaml.load(file)["epoch"]
+            epoch = yaml.load(file, Loader=yaml.SafeLoader)["epoch"]
         weights = [weights_path/EPOCH_FORMAT.format(epoch)]
     else:
         weights_path = log_dir.parents[0] / 'weights'
