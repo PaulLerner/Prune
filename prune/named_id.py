@@ -106,7 +106,7 @@ def batch_word_accuracy(targets: List[str], predictions: List[str], pad='[PAD]')
     correct, total = 0, 0
     for target, prediction in zip(targets, predictions):
         target, prediction = target.split(), prediction.split()
-        for t, p in zip_longest(target, prediction):
+        for t, p in zip_longest(target, prediction, fillvalue=pad):
             if t == pad:
                 continue
             if t == p:
