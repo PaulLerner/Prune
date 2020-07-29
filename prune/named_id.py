@@ -596,10 +596,11 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         # shuffle all windows
         indices = np.arange(len(text_windows))
         np.random.shuffle(indices)
-        for batch in batchify_windows(tokenizer, text_windows, target_windows,
-                                      audio_windows, indices,
-                                      batch_size=batch_size, mask=mask):
-            yield (None, None) + batch
+        for batch in tqdm(batchify_windows(tokenizer, text_windows, target_windows,
+                                           audio_windows, indices,
+                                           batch_size=batch_size, mask=mask),
+                          desc='Encoding batches'):
+            yield (None, []) + batch
 
 
 def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, indices,
@@ -615,7 +616,7 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
     """
     # split windows in batches w.r.t. batch_size
     # keep remainder (i.e. last batch of size <= batch_size)
-    for i in tqdm(range(0, len(indices), batch_size), desc='Encoding batches'):
+    for i in range(0, len(indices), batch_size):
         text_batch, target_batch, audio_batch = [], [], None
         for j in indices[i: i + batch_size]:
             text_batch.append(text_windows[j])
