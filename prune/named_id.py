@@ -128,7 +128,7 @@ def str_example(inp, tgt, predictions, eg=None, step=20):
 
 
 def eval(batches, model, tokenizer, log_dir,
-         test=False, evergreen=False, interactive=False, step_size=1):
+         test=False, evergreen=False, interactive=False, step_size=1, window_size=10):
     """Load model from checkpoint and evaluate it on batches.
     When testing, only the best model should be tested.
 
@@ -158,6 +158,9 @@ def eval(batches, model, tokenizer, log_dir,
     step_size: int, optional
         Overlap between two subsequent text-windows (i.e. item in batch)
         Defaults to 1.
+    window_size: int, optional
+        Number of speaker turns in one window
+        Defaults to 10.
     """
 
     if test:
@@ -788,7 +791,8 @@ if __name__ == '__main__':
 
         model = SidNet(BERT, **config.get('architecture', {}))
         eval(batches, model, tokenizer, validate_dir,
-             test=False, evergreen=evergreen, interactive=interactive, step_size=step_size)
+             test=False, evergreen=evergreen, interactive=interactive,
+             step_size=step_size, window_size=window_size)
 
     elif args['test']:
         subset = args['--subset'] if args['--subset'] else 'test'
@@ -809,6 +813,7 @@ if __name__ == '__main__':
 
         model = SidNet(BERT, **config.get('architecture', {}))
         eval(batches, model, tokenizer, test_dir,
-             test=True, interactive=interactive, step_size=step_size)
+             test=True, interactive=interactive,
+             step_size=step_size, window_size=window_size)
 
 
