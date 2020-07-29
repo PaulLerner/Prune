@@ -477,6 +477,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
           are then file-heterogeneous
         - batch_windows: List[Tuple[int]]
           indices of the start and end tokens index of the speaker turns in the batch
+          Empty if shuffling or augmenting data
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
     with open(mapping) as file:
@@ -539,7 +540,8 @@ def batchify(tokenizer, protocol, mapping, subset='train',
         windows.pop(0)
 
         # compute token windows in the batch
-        if not shuffle:
+        # except if augmenting data (FIXME)
+        if not shuffle and augment == 0:
             for start, end in windows:
                 end = len(tokenizer.tokenize(" ".join(targets[start:end])))
                 batch_windows.append((start, start+end))
