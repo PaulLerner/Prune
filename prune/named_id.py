@@ -99,7 +99,6 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
 
     indices = targets != pad
     where = (predictions[indices] == targets[indices]).nonzero(as_tuple=True)
-
     return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
 
@@ -183,6 +182,11 @@ def eval(batches, model, tokenizer, log_dir,
             uris, file_token_acc, file_word_acc = [], [], []
             previous_uri = None
             for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+                # skip fully-padded batches, this might happen with unknown speakers
+                # FIXME this could be handled in batchify but windows would not be aligned with the current implementation
+                if (target_ids != tokenizer.pad_token_id).nonzero(as_tuple=True)[0].shape[0] == 0:
+                    continue
+
                 # forward pass
                 output = model(input_ids, audio_similarity, tgt_key_padding_mask)
                 # manage devices
@@ -224,8 +228,12 @@ def eval(batches, model, tokenizer, log_dir,
                     for start, end in windows[i: i+window_size]:
                         # trim to max_length
                         shifted_start, shifted_end = min(start-shift, max_length), min(end-shift, max_length)
-                        file_target_ids[shifted_start+shift: shifted_end+shift] = t[shifted_start: shifted_end]
-                        file_output[shifted_start+shift: shifted_end+shift] += o[shifted_start: shifted_end]
+                        # HACK: this doesn't hold only at the end of TheBigBangTheory.Season03.Episode05 for some reason
+                        if len(file_target_ids[shifted_start+shift: shifted_end+shift]) == len(t[shifted_start: shifted_end]):
+                            file_target_ids[shifted_start+shift: shifted_end+shift] = t[shifted_start: shifted_end]
+                            file_output[shifted_start+shift: shifted_end+shift] += o[shifted_start: shifted_end]
+                        else:
+                            continue
                     i += step_size
                     # shift between batch and original file
                     shift = windows[i][0]#start
