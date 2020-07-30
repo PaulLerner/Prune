@@ -401,6 +401,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
             epoch_loss += loss.item()
 
         tb.add_scalar('Loss/train', epoch_loss/len(batches), epoch)
+        tb.add_scalar('lr', lr, epoch)
 
         if (epoch+1) % save_every == 0:
             save({
@@ -584,7 +585,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                                                           target_window,
                                                                           audio_emb)
             # set of actual targets (i.e. excluding [PAD], [SEP], etc.)
-            target_set = set(targets[start:end]) - set(tokenizer.all_special_tokens)
+            target_set = sorted(set(targets[start:end]) - set(tokenizer.all_special_tokens))
 
             # easy mode -> Only keep windows with named speakers in it
             if easy and not any_in_text(target_set, text_window):
