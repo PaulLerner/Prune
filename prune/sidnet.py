@@ -176,7 +176,8 @@ class SidNet(Module):
         Returns
         -------
         output: Tensor
-            (batch_size, max_length). Model's hypothesis encoded like input_ids
+            (batch_size, sequence_length, vocab_size)
+            Model's scores after LogSoftmax
         """
         # manage devices
         device_ = get_device(self.bert)
