@@ -580,10 +580,10 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             _, end = windows[i + window_size - 1]
             text_window = " ".join(tokens[start:end])
             target_window = " ".join(targets[start:end])
-            audio_window, target_tokens, audio_mask = align_audio_targets(tokenizer,
-                                                                          audio[start:end],
-                                                                          target_window,
-                                                                          audio_emb)
+            audio_window, audio_mask = align_audio_targets(tokenizer,
+                                                           audio[start:end],
+                                                           target_window,
+                                                           audio_emb)
             # set of actual targets (i.e. excluding [PAD], [SEP], etc.)
             target_set = sorted(set(targets[start:end]) - set(tokenizer.all_special_tokens))
 
@@ -595,7 +595,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             if augment >= 0:
                 text_windows.append(text_window)
                 audio_windows.append(audio_window)
-                target_windows.append(target_tokens)
+                target_windows.append(target_window)
                 audio_masks.append(audio_mask)
 
             # add `augment` windows of synthetic data
@@ -614,10 +614,10 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                             synthetic_text, flags=re.IGNORECASE)
                     synthetic_targets = re.sub(fr'\b{target}\b', random_name,
                                                synthetic_targets, flags=re.IGNORECASE)
-                audio_window, synthetic_targets, audio_mask = align_audio_targets(tokenizer,
-                                                                                  audio[start:end],
-                                                                                  synthetic_targets,
-                                                                                  audio_emb)
+                audio_window, audio_mask = align_audio_targets(tokenizer,
+                                                               audio[start:end],
+                                                               synthetic_targets,
+                                                               audio_emb)
                 audio_windows.append(audio_window)
                 audio_masks.append(audio_mask)
                 text_windows.append(synthetic_text)
@@ -642,10 +642,10 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
 
 def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
     """align audio windows with word-piece tokenization"""
-    tokens = tokenizer.tokenize(target_window)
     mask = []
     if audio_emb is None:
-        return None, tokens, mask
+        return None, mask
+    tokens = tokenizer.tokenize(target_window)
     aligned_audio = []
     previous_a = audio_window[0]
     for i, (a, tgt) in enumerate(zip_longest(audio_window, tokens)):
@@ -660,7 +660,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
             previous_a = a
     mask = np.array(mask)
     aligned_audio = np.concatenate(aligned_audio)
-    return aligned_audio, tokens, mask
+    return aligned_audio, mask
 
 
 def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, indices,
@@ -740,10 +740,10 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
         used to tokenize, pad and tensorize text
     text_batch: List[str]
         (batch_size, ) Input text
-    target_batch: List[List[str]]
-        (batch_size, ) Tokenized target speaker names
+    target_batch: List[str]
+        (batch_size, ) Target speaker names
     audio_batch: List[np.ndarray], optional
-        (batch_size, ) Audio embeddings of the input text, aligned with target_batch
+        (batch_size, ) Audio embeddings of the input text, aligned with target_ids
         Defaults to None (model only relies on the text).
     mask: bool, optional
         Compute attention_mask according to max_length.
@@ -755,7 +755,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     Returns
     -------
     input_ids: Tensor
-            (batch_size, max_length). Encoded input tokens using BertTokenizer
+        (batch_size, max_length). Encoded input tokens using BertTokenizer
     target_ids: Tensor
         (batch_size, max_length). Encoded target tokens using BertTokenizer
     audio_similarity: Tensor, optional
@@ -790,7 +790,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
                                                         mask=mask, is_pretokenized=False)
     # encode target text
     target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch,
-                                                         mask=mask, is_pretokenized=True)
+                                                         mask=mask, is_pretokenized=False)
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
 
