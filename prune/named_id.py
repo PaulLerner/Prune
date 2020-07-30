@@ -647,8 +647,10 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
         return None, mask
     tokens = tokenizer.tokenize(target_window)
     aligned_audio = []
-    previous_a = audio_window[0]
+    previous_a = np.ones((1, audio_emb.dimension))
     for i, (a, tgt) in enumerate(zip_longest(audio_window, tokens)):
+        if i >= max_length:
+            break
         # sub-word -> add audio representation of the previous word
         if tgt.startswith('##'):
             aligned_audio.append(previous_a)
@@ -656,9 +658,10 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
             if a is None:
                 mask.append(i)
                 a = np.ones(audio_emb.dimension)
-            aligned_audio.append(a.reshape(1, -1))
+            a = a.reshape(1, -1)
+            aligned_audio.append(a)
             previous_a = a
-    mask = np.array(mask)
+    mask = np.array(mask, dtype=int)
     aligned_audio = np.concatenate(aligned_audio)
     return aligned_audio, mask
 
@@ -684,8 +687,8 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
             audio_window = audio_windows[j]
             if audio_window is not None:
                 # trim to max_length
-                audio_batch.append(audio_window[:max_length])
-                audio_mask_batch.append(audio_masks[j][:max_length])
+                audio_batch.append(audio_window)
+                audio_mask_batch.append(audio_masks[j])
         # encode batch (i.e. tokenize, tensorize...)
         batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch,
                                    mask=mask, audio_mask_batch=audio_mask_batch)
@@ -777,8 +780,8 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
             # distance to similarity
             d = 1-d
             # mask similarity matrix : masked items are only similar to themselves
-            d[audio_mask] = 0#np.zeros((audio_mask.shape[0], max_length))
-            d[audio_mask, audio_mask] = 1#np.ones((audio_mask.shape[0],))
+            d[audio_mask] = 0
+            d[audio_mask, audio_mask] = 1
             audio_similarity[i, : d.shape[0], : d.shape[1]] = d
         # np.ndarray to Tensor
         audio_similarity = from_numpy(audio_similarity)
