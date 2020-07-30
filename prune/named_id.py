@@ -561,7 +561,7 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             target_window = " ".join(targets[start:end])
 
             # set of actual targets (i.e. excluding [PAD], [SEP], etc.)
-            target_set = set(targets[start:end]) - set(tokenizer.all_special_tokens)
+            target_set = sorted(set(targets[start:end]) - set(tokenizer.all_special_tokens))
 
             # easy mode -> Only keep windows with named speakers in it
             if easy and not any_in_text(target_set, text_window):
