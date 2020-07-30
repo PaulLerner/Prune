@@ -65,13 +65,16 @@ from tabulate import tabulate
 from itertools import zip_longest
 
 from pyannote.core import Segment
+from pyannote.core.utils.distance import pdist
 from pyannote.database import get_protocol
+from pyannote.audio.features.wrapper import Wrapper, Wrappable
 import Plumcot as PC
 
 import re
 import numpy as np
+from scipy.spatial.distance import squareform
 
-from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros
+from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
@@ -421,7 +424,7 @@ def any_in_text(items, text):
     return False
 
 
-def batchify(tokenizer, protocol, mapping, subset='train',
+def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
              batch_size=128, window_size=10, step_size=1,
              mask=True, easy=False, sep_change=False, augment=0, shuffle=True):
     """
@@ -441,6 +444,10 @@ def batchify(tokenizer, protocol, mapping, subset='train',
     subset: str, optional
         subset of the protocol to get transcription from
         Defaults to training set.
+    audio_emb: `Wrappable`, optional
+        Describes how raw speaker embeddings should be obtained.
+        See pyannote.audio.features.wrapper.Wrapper documentation for details.
+        Defaults to None, indicating that the model should rely only on the text.
     batch_size: int, optional
         Remainder batch (of size <= batch_size) is kept.
         Defaults to 128.
@@ -488,6 +495,9 @@ def batchify(tokenizer, protocol, mapping, subset='train',
     with open(mapping) as file:
         mapping = json.load(file)
 
+    if audio_emb is not None:
+        audio_emb = Wrapper(audio_emb)
+
     # load list of names
     if augment != 0:
         names = []
@@ -497,14 +507,19 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                           for line in file.read().split("\n") if line != '']
         names = np.array(names)
 
-    text_windows, audio_windows, target_windows = [], [], []
+    text_windows, audio_windows, target_windows, audio_masks = [], [], [], []
 
     # iterate over protocol subset
     for current_file in tqdm(getattr(protocol, subset)(), desc='Loading transcriptions'):
         if not shuffle:
-            batch_windows, text_windows, audio_windows, target_windows = [], [], [], []
+            batch_windows, text_windows, audio_windows, target_windows, audio_masks = [], [], [], [], []
         transcription = current_file['transcription']
         uri = current_file['uri']
+
+        current_audio_emb = None
+        # get audio embeddings from current_file
+        if audio_emb is not None:
+            current_audio_emb = audio_emb(current_file)
 
         # format transcription into 3 lists: tokens, audio, targets
         # and segment it in speaker turns (i.e. speaker homogeneous)
@@ -518,18 +533,23 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                 if sep_change:
                     tokens.append(tokenizer.sep_token)
                     targets.append(tokenizer.pad_token)
-                    audio.append(tokenizer.pad_token)
+                    audio.append(None)
                     end += 1
                 windows.append((start, end))
                 start = end
 
-            # if audio alignment is not confident for word
-            # then audio similarity matrix of word should be uniform
-            # so it doesn't weigh on the text decision
-            if word._.confidence > 0.5 and '#unknown#' not in word._.speaker:
+            # get audio embedding for word if alignment timing is confident enough
+            if audio_emb is not None and word._.confidence > 0.5:
                 segment = Segment(word._.time_start, word._.time_end)
+                segment = current_audio_emb.crop(segment, mode="loose")
+                # skip segments so small we don't have any embedding for it
+                if len(segment) < 1:
+                    segment = None
+                # average audio-embedding over the segment frames
+                else:
+                    segment = np.mean(segment, axis=0)
             else:
-                segment = tokenizer.pad_token
+                segment = None
             # if we don't have a proper target we should mask the loss function
             target = mapping.get(word._.speaker, tokenizer.pad_token)
 
@@ -559,7 +579,10 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             _, end = windows[i + window_size - 1]
             text_window = " ".join(tokens[start:end])
             target_window = " ".join(targets[start:end])
-
+            audio_window, target_tokens, audio_mask = align_audio_targets(tokenizer,
+                                                                          audio[start:end],
+                                                                          target_window,
+                                                                          audio_emb)
             # set of actual targets (i.e. excluding [PAD], [SEP], etc.)
             target_set = set(targets[start:end]) - set(tokenizer.all_special_tokens)
 
@@ -570,8 +593,9 @@ def batchify(tokenizer, protocol, mapping, subset='train',
             # augment < 0 (=) discard real example
             if augment >= 0:
                 text_windows.append(text_window)
-                audio_windows.append(audio[start:end])
-                target_windows.append(target_window)
+                audio_windows.append(audio_window)
+                target_windows.append(target_tokens)
+                audio_masks.append(audio_mask)
 
             # add `augment` windows of synthetic data
             for augmentation in range(abs(augment)):
@@ -589,29 +613,57 @@ def batchify(tokenizer, protocol, mapping, subset='train',
                                             synthetic_text, flags=re.IGNORECASE)
                     synthetic_targets = re.sub(fr'\b{target}\b', random_name,
                                                synthetic_targets, flags=re.IGNORECASE)
-                audio_windows.append(audio[start:end])
+                audio_window, synthetic_targets, audio_mask = align_audio_targets(tokenizer,
+                                                                                  audio[start:end],
+                                                                                  synthetic_targets,
+                                                                                  audio_emb)
+                audio_windows.append(audio_window)
+                audio_masks.append(audio_mask)
                 text_windows.append(synthetic_text)
                 target_windows.append(synthetic_targets)
         # yield file-homogeneous batches along with file-uri
         if not shuffle:
             indices = np.arange(len(text_windows))
             for batch in batchify_windows(tokenizer, text_windows, target_windows,
-                                          audio_windows, indices,
-                                          batch_size=batch_size, mask=mask):
+                                          audio_windows, indices, batch_size=batch_size,
+                                          mask=mask, audio_masks=audio_masks):
                 yield (uri, batch_windows) + batch
     if shuffle:
         # shuffle all windows
         indices = np.arange(len(text_windows))
         np.random.shuffle(indices)
         for batch in tqdm(batchify_windows(tokenizer, text_windows, target_windows,
-                                           audio_windows, indices,
-                                           batch_size=batch_size, mask=mask),
+                                           audio_windows, indices, batch_size=batch_size,
+                                           mask=mask, audio_masks=audio_masks),
                           desc='Encoding batches'):
             yield (None, []) + batch
 
 
+def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
+    """align audio windows with word-piece tokenization"""
+    tokens = tokenizer.tokenize(target_window)
+    mask = []
+    if audio_emb is None:
+        return None, tokens, mask
+    aligned_audio = []
+    previous_a = audio_window[0]
+    for i, (a, tgt) in enumerate(zip_longest(audio_window, tokens)):
+        # sub-word -> add audio representation of the previous word
+        if tgt.startswith('##'):
+            aligned_audio.append(previous_a)
+        else:
+            if a is None:
+                mask.append(i)
+                a = np.ones(audio_emb.dimension)
+            aligned_audio.append(a.reshape(1, -1))
+            previous_a = a
+    mask = np.array(mask)
+    aligned_audio = np.concatenate(aligned_audio)
+    return aligned_audio, tokens, mask
+
+
 def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, indices,
-                     batch_size=128, mask=True):
+                     batch_size=128, mask=True, audio_masks=None):
     """
     Parameters
     ----------
@@ -624,31 +676,38 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
     # split windows in batches w.r.t. batch_size
     # keep remainder (i.e. last batch of size <= batch_size)
     for i in range(0, len(indices), batch_size):
-        text_batch, target_batch, audio_batch = [], [], None
+        text_batch, target_batch, audio_batch, audio_mask_batch = [], [], [], []
         for j in indices[i: i + batch_size]:
             text_batch.append(text_windows[j])
             target_batch.append(target_windows[j])
-            # TODO integrate audio
-            # audio_batch.append(audio_windows[j])
+            audio_window = audio_windows[j]
+            if audio_window is not None:
+                # trim to max_length
+                audio_batch.append(audio_window[:max_length])
+                audio_mask_batch.append(audio_masks[j][:max_length])
         # encode batch (i.e. tokenize, tensorize...)
         batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch,
-                                   mask=mask)
+                                   mask=mask, audio_mask_batch=audio_mask_batch)
         # append original text and target to be able to evaluate
         # (FIXME: this might add extra memory usage, unnecessary to train the model)
         yield (text_batch, target_batch) + batch
 
 
-def batch_encode_plus(tokenizer, text_batch, mask=True):
+def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False):
     """Shortcut function to encode a text (either input or target) batch
     using tokenizer.batch_encode_plus with the appropriate parameters.
 
     Parameters
     ----------
     tokenizer: BertTokenizer
-    text_batch: List[str]
+    text_batch:
+        - List[List[str]] if is_pretokenized
+        - List[str] otherwise
     mask: bool, optional
         Compute attention_mask according to max_length.
         Defaults to True.
+    is_pretokenized: bool, optional
+        see tokenizer.batch_encode_plus
 
     Returns
     -------
@@ -663,13 +722,15 @@ def batch_encode_plus(tokenizer, text_batch, mask=True):
                                                     max_length=max_length,
                                                     pad_to_max_length='right',
                                                     return_tensors='pt',
-                                                    return_attention_mask=mask)
+                                                    return_attention_mask=mask,
+                                                    is_pretokenized=is_pretokenized)
     input_ids = text_encoded_plus['input_ids']
     attention_mask = text_encoded_plus['attention_mask'] if mask else None
     return input_ids, attention_mask
 
 
-def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, mask=True):
+def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
+                       mask=True, audio_mask_batch=None):
     """Encode input, target text and audio consistently in torch Tensor
 
     Parameters
@@ -678,14 +739,17 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
         used to tokenize, pad and tensorize text
     text_batch: List[str]
         (batch_size, ) Input text
-    target_batch: List[str]
-        (batch_size, ) Target speaker name, aligned with text_batch
-    audio_batch: List[Segment], optional
-        (batch_size, ) Timestamps of the input text, aligned with text_batch[i].split(' ')
+    target_batch: List[List[str]]
+        (batch_size, ) Tokenized target speaker names
+    audio_batch: List[np.ndarray], optional
+        (batch_size, ) Audio embeddings of the input text, aligned with target_batch
         Defaults to None (model only relies on the text).
     mask: bool, optional
         Compute attention_mask according to max_length.
         Defaults to True.
+    audio_mask_batch: List[np.ndarray], optional
+        indices where audio embeddings are not reliable
+        and thus should not weight model's output
 
     Returns
     -------
@@ -704,19 +768,28 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None, ma
         (batch_size, max_length). Used to mask target_ids.
         Defaults to None (no masking).
     """
-    if audio_batch is not None:
-        raise NotImplementedError("audio_batch")
-        # TODO: compute audio similarity matrix
-        # note that it must be aligned with bert tokenization
+    if len(audio_batch) != 0:
+        # compute audio similarity matrix (with numpy as torch doesn't have squareform, yet)
+        audio_similarity = np.zeros((len(audio_batch), max_length, max_length), dtype=np.float32)
+        for i, (fX, audio_mask) in enumerate(zip(audio_batch, audio_mask_batch)):
+            d = squareform(pdist(fX, metric='cosine'))
+            # distance to similarity
+            d = 1-d
+            # mask similarity matrix : masked items are only similar to themselves
+            d[audio_mask] = 0#np.zeros((audio_mask.shape[0], max_length))
+            d[audio_mask, audio_mask] = 1#np.ones((audio_mask.shape[0],))
+            audio_similarity[i, : d.shape[0], : d.shape[1]] = d
+        # np.ndarray to Tensor
+        audio_similarity = from_numpy(audio_similarity)
     else:
         audio_similarity = None
 
-    # encode input text
-    input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch, mask=mask)
-
+    # tokenize and encode input text
+    input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch,
+                                                        mask=mask, is_pretokenized=False)
     # encode target text
-    target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch, mask=mask)
-
+    target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch,
+                                                         mask=mask, is_pretokenized=True)
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
 
@@ -753,8 +826,15 @@ if __name__ == '__main__':
 
     if args['train']:
         subset = args['--subset'] if args['--subset'] else 'train'
+        start_epoch = int(args['--from']) if args['--from'] else None
+        train_dir = Path(args['<experiment_dir>'], f'{protocol_name}.{subset}')
+        train_dir.mkdir(exist_ok=True)
+        config = load_config(train_dir.parents[0])
+        architecture = config.get('architecture', {})
+        audio = config.get('audio')
+        model = SidNet(BERT, **architecture)
         # get batches from protocol subset
-        batches = list(batchify(tokenizer, protocol, mapping, subset,
+        batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
                                 batch_size=batch_size,
                                 window_size=window_size,
                                 step_size=step_size,
@@ -763,43 +843,23 @@ if __name__ == '__main__':
                                 sep_change=sep_change,
                                 augment=augment,
                                 shuffle=True))
-        start_epoch = int(args['--from']) if args['--from'] else None
-        train_dir = Path(args['<experiment_dir>'], f'{protocol_name}.{subset}')
-        train_dir.mkdir(exist_ok=True)
-        config = load_config(train_dir.parents[0])
-
-        model = SidNet(BERT, **config.get('architecture', {}))
         model, optimizer = train(batches, model, tokenizer, train_dir,
                                  start_epoch=start_epoch,
                                  **config.get('training', {}))
-
     elif args['validate']:
         subset = args['--subset'] if args['--subset'] else 'development'
-        # get batches from protocol subset
-        batches = list(batchify(tokenizer, protocol, mapping, subset,
-                                batch_size=batch_size,
-                                window_size=window_size,
-                                step_size=step_size,
-                                mask=mask,
-                                easy=easy,
-                                sep_change=sep_change,
-                                augment=augment,
-                                shuffle=False))
         evergreen = args['--evergreen']
         interactive = args['--interactive']
         validate_dir = Path(args['<train_dir>'], f'{protocol_name}.{subset}')
         validate_dir.mkdir(exist_ok=True)
         config = load_config(validate_dir.parents[1])
 
-        model = SidNet(BERT, **config.get('architecture', {}))
-        eval(batches, model, tokenizer, validate_dir,
-             test=False, evergreen=evergreen, interactive=interactive,
-             step_size=step_size, window_size=window_size)
+        architecture = config.get('architecture', {})
+        audio = config.get('audio')
+        model = SidNet(BERT, **architecture)
 
-    elif args['test']:
-        subset = args['--subset'] if args['--subset'] else 'test'
         # get batches from protocol subset
-        batches = list(batchify(tokenizer, protocol, mapping, subset,
+        batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
                                 batch_size=batch_size,
                                 window_size=window_size,
                                 step_size=step_size,
@@ -808,12 +868,32 @@ if __name__ == '__main__':
                                 sep_change=sep_change,
                                 augment=augment,
                                 shuffle=False))
+        eval(batches, model, tokenizer, validate_dir,
+             test=False, evergreen=evergreen, interactive=interactive,
+             step_size=step_size, window_size=window_size)
+
+    elif args['test']:
+        subset = args['--subset'] if args['--subset'] else 'test'
         interactive = args['--interactive']
         test_dir = Path(args['<validate_dir>'], f'{protocol_name}.{subset}')
         test_dir.mkdir(exist_ok=True)
         config = load_config(test_dir.parents[2])
 
-        model = SidNet(BERT, **config.get('architecture', {}))
+        architecture = config.get('architecture', {})
+        audio = config.get('audio')
+        model = SidNet(BERT, **architecture)
+
+        # get batches from protocol subset
+        batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
+                                batch_size=batch_size,
+                                window_size=window_size,
+                                step_size=step_size,
+                                mask=mask,
+                                easy=easy,
+                                sep_change=sep_change,
+                                augment=augment,
+                                shuffle=False))
+
         eval(batches, model, tokenizer, test_dir,
              test=True, interactive=interactive,
              step_size=step_size, window_size=window_size)

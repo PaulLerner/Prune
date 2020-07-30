@@ -9,7 +9,7 @@ from transformers import BertModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, Module, Linear, \
     LogSoftmax, LayerNorm, Identity
 from torch.cuda import device_count
-from torch import device, Tensor
+from torch import device, Tensor, bmm
 
 
 DEVICES = [device('cpu')] if device_count() == 0 else \
@@ -62,10 +62,6 @@ class SidNet(Module):
     bert: `str`, optional
         Model name or path, see BertTokenizer.from_pretrained
         Defaults to 'bert-base-cased'.
-    audio: `Wrappable`, optional
-        Describes how raw speaker embeddings should be obtained.
-        See pyannote.audio.features.wrapper.Wrapper documentation for details.
-        Defaults to None, indicating that the model should rely only on the text.
     num_layers: `int`, optional
         The number of sub-encoder-layers in the encoder.
         If set to 0 then self.encoder is Identity
@@ -94,7 +90,7 @@ class SidNet(Module):
     Using the output embedding to improve language models. arXivpreprint arXiv:1608.05859.
     """
 
-    def __init__(self, bert='bert-base-cased', audio=None, num_layers=6, nhead=8,
+    def __init__(self, bert='bert-base-cased', num_layers=6, nhead=8,
                  dim_feedforward=2048, dropout=0.1, activation='relu', tie_weights=False):
 
         super().__init__()
@@ -166,7 +162,7 @@ class SidNet(Module):
         input_ids: Tensor
             (batch_size, max_length). Encoded input tokens using BertTokenizer
         audio_similarity: Tensor, optional
-            (batch_size, max_length, max_length). Similarity (e.g. cosine distance)
+            (batch_size, max_length, max_length). Similarity (e.g. 1 - cosine distance)
             between audio embeddings of words, aligned with target_ids.
             Defaults to None, indicating that the model should rely only on the text.
         src_key_padding_mask: Tensor, optional
@@ -208,11 +204,14 @@ class SidNet(Module):
         # reshape output like (batch_size, sequence_length, vocab_size)
         text_output = text_output.transpose(0, 1)
 
-        # TODO weigh output using audio_similarity here
+        # weigh output using audio_similarity
         if audio_similarity is not None:
-            audio_similarity = audio_similarity.to(device_)
+            audio_similarity = audio_similarity.to(text_output.device)
+            output = bmm(audio_similarity, text_output)
+        else:
+            output = text_output
 
         # activate with LogSoftmax
-        output = self.activation(text_output)
+        output = self.activation(output)
         return output
 
