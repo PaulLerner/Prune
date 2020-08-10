@@ -15,7 +15,6 @@ Common options:
 --window=<window>	 Window size [default: 8]
 --step=<step>		 Step size [default: 1]
 --max_len=<max_len>	 Maximum # of tokens input to BERT. Maximum 512 [default: 256]
---mask               Compute attention_mask according to max_len.
 --easy               Only keep text windows with named speakers in it.
 --sep_change         Add a special "[SEP]" token between every speech turn.
 
@@ -811,7 +810,7 @@ if __name__ == '__main__':
     window_size = int(args['--window']) if args['--window'] else 8
     step_size = int(args['--step']) if args['--step'] else 1
     max_length = int(args['--max_len']) if args['--max_len'] else 256
-    mask = args['--mask']
+    mask = True
     easy = args['--easy']
     sep_change = args['--sep_change']
     augment = int(args['--augment']) if args['--augment'] else 0
