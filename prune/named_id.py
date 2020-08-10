@@ -421,6 +421,10 @@ def any_in_text(items, text):
     return False
 
 
+def join_batch(batch):
+    return [' '.join(item) for item in batch]
+
+
 def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
              batch_size=128, window_size=10, step_size=1,
              mask=True, easy=False, sep_change=False, augment=0, shuffle=True):
@@ -589,9 +593,9 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
 
             # augment < 0 (=) discard real example
             if augment >= 0:
-                text_windows.append(text_window)
+                text_windows.append(text_window.split())
                 audio_windows.append(audio_window)
-                target_windows.append(target_window)
+                target_windows.append(target_window.split())
                 audio_masks.append(audio_mask)
 
             # add `augment` windows of synthetic data
@@ -616,8 +620,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                                                audio_emb)
                 audio_windows.append(audio_window)
                 audio_masks.append(audio_mask)
-                text_windows.append(synthetic_text)
-                target_windows.append(synthetic_targets)
+                text_windows.append(synthetic_text.split())
+                target_windows.append(synthetic_targets.split())
         # yield file-homogeneous batches along with file-uri
         if not shuffle:
             indices = np.arange(len(text_windows))
@@ -688,26 +692,24 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
         # encode batch (i.e. tokenize, tensorize...)
         batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch,
                                    mask=mask, audio_mask_batch=audio_mask_batch)
+        # join batches with spaces to match tokenizer.batch_decode
+        text_batch, target_batch = join_batch(text_batch), join_batch(target_batch)
         # append original text and target to be able to evaluate
         # (FIXME: this might add extra memory usage, unnecessary to train the model)
         yield (text_batch, target_batch) + batch
 
 
-def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False):
+def batch_encode_plus(tokenizer, text_batch, mask=True):
     """Shortcut function to encode a text (either input or target) batch
     using tokenizer.batch_encode_plus with the appropriate parameters.
 
     Parameters
     ----------
     tokenizer: BertTokenizer
-    text_batch:
-        - List[List[str]] if is_pretokenized
-        - List[str] otherwise
+    text_batch: List[List[str]]
     mask: bool, optional
         Compute attention_mask according to max_length.
         Defaults to True.
-    is_pretokenized: bool, optional
-        see tokenizer.batch_encode_plus
 
     Returns
     -------
@@ -723,7 +725,7 @@ def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False):
                                                     pad_to_max_length='right',
                                                     return_tensors='pt',
                                                     return_attention_mask=mask,
-                                                    is_pretokenized=is_pretokenized)
+                                                    is_pretokenized=True)
     input_ids = text_encoded_plus['input_ids']
     attention_mask = text_encoded_plus['attention_mask'] if mask else None
     return input_ids, attention_mask
@@ -785,11 +787,9 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
         audio_similarity = None
 
     # tokenize and encode input text
-    input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch,
-                                                        mask=mask, is_pretokenized=False)
+    input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch, mask=mask)
     # encode target text
-    target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch,
-                                                         mask=mask, is_pretokenized=False)
+    target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch, mask=mask)
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
 
