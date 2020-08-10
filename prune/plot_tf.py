@@ -14,19 +14,17 @@ np.set_printoptions(precision=2, suppress=True)
 
 
 def plot(paths):
-    results = {}
     metrics = set()
+    plt.figure(figsize=(10, 8))
     for path in paths:
         path = Path(path)
         _, name, _, metric = path.stem.split('-')
-        results[name] = np.loadtxt(path, delimiter=",",
-                                       dtype=float, skiprows=1, usecols=(1, 2))
+        results = np.loadtxt(path, delimiter=",",
+                             dtype=float, skiprows=1, usecols=(1, 2))
+        plt.plot(results[:, 0], results[:, 1], label=name)
         metrics.add(metric)
-    plt.figure(figsize=(10, 8))
     plt.xlabel("epochs")
     plt.ylabel(' / '.join(metrics))
-    for name, result in results.items():
-        plt.plot(result[:, 0], result[:, 1], label=name)
     plt.legend()
     plt.show()
 
