@@ -313,7 +313,7 @@ def eval(batches, model, tokenizer, log_dir,
 
 
 def train(batches, model, tokenizer, train_dir=Path.cwd(),
-          audio=None, lr=1e-3, max_grad_norm=None,
+          lr=1e-3, max_grad_norm=None,
           epochs=100, freeze=['bert'], save_every=1, start_epoch=None):
     """Train the model for `epochs` epochs
 
@@ -329,10 +329,6 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     train_dir: Path, optional
         Path to log training loss and save model weights (under experiment_path/weights)
         Defaults to current working directory.
-    audio: `Wrappable`, optional
-        Describes how raw speaker embeddings should be obtained.
-        See pyannote.audio.features.wrapper.Wrapper documentation for details.
-        Defaults to None, indicating that the model should rely only on the text.
     lr: float, optional
         Learning rate used to optimize model parameters.
         Defaults to 1e-3
