@@ -9,7 +9,7 @@ from transformers import BertModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, Module, Linear, \
     LogSoftmax, LayerNorm, Identity
 from torch.cuda import device_count
-from torch import device, Tensor, bmm
+from torch import device, Tensor
 
 
 DEVICES = [device('cpu')] if device_count() == 0 else \
@@ -208,7 +208,7 @@ class SidNet(Module):
         # weigh output using audio_similarity
         if audio_similarity is not None:
             audio_similarity = audio_similarity.to(text_output.device)
-            output = bmm(audio_similarity, text_output)
+            output = audio_similarity @ text_output
         else:
             output = text_output
 
