@@ -77,7 +77,7 @@ from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
-from torch.nn import NLLLoss
+from torch.nn import BCELoss
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
 
@@ -164,7 +164,7 @@ def eval(batches, model, tokenizer, log_dir,
         Number of speaker turns in one window
         Defaults to 10.
     """
-
+    raise NotImplementedError("eval")
     if test:
         weights_path = log_dir.parents[1] / 'weights'
         with open(log_dir.parent / 'params.yml') as file:
@@ -368,7 +368,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     model.freeze(freeze)
     model.train()
 
-    criterion = NLLLoss(ignore_index=tokenizer.pad_token_id)
+    criterion = BCELoss(reduction='none')
 
     tb = SummaryWriter(train_dir)
     for epoch in tqdm(range(start_epoch, epochs+start_epoch), desc='Training'):
@@ -381,17 +381,20 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
 
             # forward pass
             output = model(input_ids, audio_similarity, src_key_padding_mask)
-            # reshape output like (batch_size * sequence_length, vocab_size)
-            # and target_ids like (batch_size * sequence_length)
-            # and manage devices
-            output = output.reshape(-1, model.vocab_size)
-            target_ids = target_ids.reshape(-1).to(output.device)
+            # manage devices
+            target_ids = target_ids.to(output.device)
 
             # calculate loss
             loss = criterion(output, target_ids)
+            # mask loss
+            loss *= tgt_key_padding_mask
+            # average loss
+            loss = loss.mean()
             loss.backward()
+
             if max_grad_norm is not None:
                 clip_grad_norm_(model.parameters(), max_grad_norm)
+
             optimizer.step()
             epoch_loss += loss.item()
 
@@ -754,18 +757,17 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     -------
     input_ids: Tensor
         (batch_size, max_length). Encoded input tokens using BertTokenizer
-    target_ids: Tensor
-        (batch_size, max_length). Encoded target tokens using BertTokenizer
+    relative_targets: Tensor
+        (batch_size, max_length, max_length). one-hot target index w.r.t. input_ids
+        e.g. "My name is Paul ." -> one-hot([3, 3, 3, 3, 3])
     audio_similarity: Tensor, optional
         (batch_size, max_length, max_length). Similarity (e.g. cosine distance)
         between audio embeddings of words, aligned with target_ids.
         Defaults to None, indicating that the model should rely only on the text.
     src_key_padding_mask: Tensor, optional
         (batch_size, max_length). Used to mask input_ids.
-        Defaults to None (no masking).
     tgt_key_padding_mask: Tensor, optional
-        (batch_size, max_length). Used to mask target_ids.
-        Defaults to None (no masking).
+        (batch_size, max_length). Used to mask relative_targets.
     """
     if len(audio_batch) != 0:
         # compute audio similarity matrix (with numpy as torch doesn't have squareform, yet)
@@ -783,13 +785,20 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     else:
         audio_similarity = None
 
-    # tokenize and encode input text
+    # tokenize and encode input text: (batch_size, max_length)
     input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch,
                                                         mask=mask, is_pretokenized=False)
-    # encode target text
+    # encode target text: (batch_size, max_length)
     target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch,
                                                          mask=mask, is_pretokenized=False)
-    return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
+    # convert targets to relative targets: (batch_size, max_length, max_length)
+    relative_targets = zeros(target_ids.shape + (max_length,))
+    for i, (input_id, target_id) in enumerate(zip(input_ids, target_ids)):
+        for j, t in enumerate(target_id):
+            where = (input_id == t).nonzero().reshape(-1)
+            relative_targets[i, j, where] = 1.
+
+    return input_ids, relative_targets, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
 
 def load_config(parent_path):
@@ -831,7 +840,7 @@ if __name__ == '__main__':
         config = load_config(train_dir.parents[0])
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = SidNet(BERT, **architecture)
+        model = SidNet(BERT, max_length, **architecture)
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
                                 batch_size=batch_size,
@@ -855,7 +864,7 @@ if __name__ == '__main__':
 
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = SidNet(BERT, **architecture)
+        model = SidNet(BERT, max_length, **architecture)
 
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
@@ -880,7 +889,7 @@ if __name__ == '__main__':
 
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = SidNet(BERT, **architecture)
+        model = SidNet(BERT, max_length, **architecture)
 
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,

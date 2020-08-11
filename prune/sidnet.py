@@ -7,7 +7,7 @@ import numpy as np
 
 from transformers import BertModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, Module, Linear, \
-    LogSoftmax, LayerNorm, Identity
+    Sigmoid, LayerNorm, Identity
 from torch.cuda import device_count
 from torch import device, Tensor
 
@@ -62,6 +62,9 @@ class SidNet(Module):
     bert: `str`, optional
         Model name or path, see BertTokenizer.from_pretrained
         Defaults to 'bert-base-cased'.
+    out_size: `int`, optional
+        Output size of the model.
+        Defaults to 256.
     num_layers: `int`, optional
         The number of sub-encoder-layers in the encoder.
         If set to 0 then self.encoder is Identity
@@ -79,28 +82,22 @@ class SidNet(Module):
     activation: `str`, optional
         The activation function of intermediate layer of the FFN: 'relu' or 'gelu'
          Defaults to 'relu'
-    tie_weights: `bool`, optional
-        Tie embedding and classification layer weights as in Press and Wolf, 2016.
-        This prohibits the use of an additive bias in the classification layer (FIXME),
-        at least because we don't want the weights and biases to be on 2 different devices.
-
     References
     ----------
     Press, O., Wolf, L., 2016.
     Using the output embedding to improve language models. arXivpreprint arXiv:1608.05859.
     """
 
-    def __init__(self, bert='bert-base-cased', num_layers=6, nhead=8,
-                 dim_feedforward=2048, dropout=0.1, activation='relu', tie_weights=False):
+    def __init__(self, bert='bert-base-cased', out_size=256, num_layers=6, nhead=8,
+                 dim_feedforward=2048, dropout=0.1, activation='relu'):
 
         super().__init__()
         # put bert in the first device
         # and the encoder and output layer in the last (hopefully another) one
-        # obviously, the output layer will end up on the first device if we're tying weights
 
         self.bert = BertModel.from_pretrained(bert).to(device=DEVICES[0])
         self.hidden_size = self.bert.config.hidden_size
-        self.vocab_size = self.bert.config.vocab_size
+        self.out_size = out_size
         self.encoder_num_layers = num_layers
         # 0 encoder layers (=) feed BERT output directly to self.linear
         if self.encoder_num_layers == 0:
@@ -117,12 +114,9 @@ class SidNet(Module):
                                               encoder_norm).to(device=DEVICES[-1])
 
         # handle classification layer and weight-tying
-        self.linear = Linear(self.hidden_size, self.vocab_size,
-                             bias=not tie_weights).to(device=DEVICES[-1])
-        if tie_weights:
-            self.linear.weight = self.bert.embeddings.word_embeddings.weight
+        self.linear = Linear(self.hidden_size, self.out_size).to(device=DEVICES[-1])
 
-        self.activation = LogSoftmax(dim=2)
+        self.activation = Sigmoid()
 
     def freeze(self, names: List[str]):
         """Freeze parts of the model
@@ -172,8 +166,8 @@ class SidNet(Module):
         Returns
         -------
         output: Tensor
-            (batch_size, sequence_length, vocab_size)
-            Model's scores after LogSoftmax
+            (batch_size, sequence_length, out_size)
+            Model's scores after Sigmoid
         """
         # manage devices
         device_ = get_device(self.bert)
@@ -202,7 +196,7 @@ class SidNet(Module):
         device_ = get_device(self.linear)
         text_output = self.linear(text_output.to(device_))
 
-        # reshape output like (batch_size, sequence_length, vocab_size)
+        # reshape output like (batch_size, sequence_length, out_size)
         text_output = text_output.transpose(0, 1)
 
         # weigh output using audio_similarity
@@ -212,7 +206,7 @@ class SidNet(Module):
         else:
             output = text_output
 
-        # activate with LogSoftmax
+        # activate with Sigmoid
         output = self.activation(output)
         return output
 
