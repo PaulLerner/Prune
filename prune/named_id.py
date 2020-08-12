@@ -387,8 +387,9 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
             # calculate loss
             loss = criterion(output, target_ids)
             # mask loss
-            loss *= tgt_key_padding_mask
-            # average loss
+            tgt_key_padding_mask = tgt_key_padding_mask.bool()
+            loss[~tgt_key_padding_mask] = 0.
+            # average loss: FIXME use sum/tgt_key_padding_mask.nonzero ?
             loss = loss.mean()
             loss.backward()
 
