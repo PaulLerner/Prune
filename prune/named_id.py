@@ -804,7 +804,12 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     relative_targets = zeros(target_ids.shape + (max_length,))
     for i, (input_id, target_id) in enumerate(zip(input_ids, target_ids)):
         for j, t in enumerate(target_id):
-            where = (input_id == t).nonzero().reshape(-1)
+            where = input_id == t
+            # speaker name is not mentioned in input -> pad target
+            if not where.any():
+                tgt_key_padding_mask[i, j] = tokenizer.pad_token_id
+                continue
+            where = where.nonzero().reshape(-1)
             relative_targets[i, j, where] = 1.
 
     return input_ids, relative_targets, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
