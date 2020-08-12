@@ -73,7 +73,7 @@ import re
 import numpy as np
 from scipy.spatial.distance import squareform
 
-from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy
+from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, zeros_like
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
@@ -240,8 +240,10 @@ def eval(batches, model, tokenizer, log_dir,
                     shift = windows[i][0]#start
                 # get model prediction per token: (batch_size, sequence_length)
                 relative_out = argmax(output, dim=2)
-                # retrieve token ids from input (batch_size, sequence_length)
-                prediction_ids = input_ids[relative_out]
+                # retrieve token ids from input (batch_size, sequence_length) and manage device
+                prediction_ids = zeros_like(input_ids, device=output.device)
+                for j, (input_window_id, relative_window_out) in enumerate(zip(input_ids, relative_out)):
+                    prediction_ids[j] = input_window_id[relative_window_out]
 
                 # decode and compute word accuracy
                 predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
