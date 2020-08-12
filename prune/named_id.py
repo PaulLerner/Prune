@@ -624,7 +624,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                           audio_windows, indices, batch_size=batch_size,
                                           mask=mask, audio_masks=audio_masks):
                 # skip fully-padded batches, this might happen with unknown speakers
-                if (batch[-1] != tokenizer.pad_token_id).nonzero(as_tuple=True)[0].shape[0] == 0:
+                if (batch[-1] == tokenizer.pad_token_id).all():
                     continue
 
                 yield (uri, batch_windows) + batch
@@ -637,7 +637,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                            mask=mask, audio_masks=audio_masks),
                           desc='Encoding batches'):
                 # skip fully-padded batches, this might happen with unknown speakers
-                if (batch[-1] != tokenizer.pad_token_id).nonzero(as_tuple=True)[0].shape[0] == 0:
+                if (batch[-1] == tokenizer.pad_token_id).all():
                     continue
                 yield (None, []) + batch
 
