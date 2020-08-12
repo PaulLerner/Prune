@@ -182,7 +182,7 @@ def eval(batches, model, tokenizer, log_dir,
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         with no_grad():
-            epoch_loss, epoch_token_acc, epoch_word_acc = 0., 0., 0.
+            epoch_loss, epoch_word_acc = 0., 0.
             uris, file_token_acc, file_word_acc = [], [], []
             previous_uri = None
             for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
@@ -243,9 +243,6 @@ def eval(batches, model, tokenizer, log_dir,
                 # retrieve token ids from input (batch_size, sequence_length)
                 prediction_ids = input_ids[relative_out]
 
-                # compute batch-token accuracy
-                epoch_token_acc += token_accuracy(target_ids, prediction_ids, tokenizer.pad_token_id)
-
                 # decode and compute word accuracy
                 predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
                 epoch_word_acc += batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
@@ -263,7 +260,6 @@ def eval(batches, model, tokenizer, log_dir,
                     # print current metrics
                     metrics = {
                         'Loss/eval': [epoch_loss],
-                        'Accuracy/eval/batch/token': [epoch_token_acc],
                         'Accuracy/eval/batch/word': [epoch_word_acc]
                     }
                     print(tabulate(metrics, headers='keys'))
@@ -297,7 +293,6 @@ def eval(batches, model, tokenizer, log_dir,
             # tb.add_scalar('Accuracy/eval/file/token', file_token_acc[-1], epoch)
             # tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
             tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
-            tb.add_scalar('Accuracy/eval/batch/token', epoch_token_acc / len(batches), epoch)
             epoch_word_acc /= len(batches)
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc, epoch)
             if epoch_word_acc > best:
