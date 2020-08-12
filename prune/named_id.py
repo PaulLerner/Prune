@@ -129,12 +129,12 @@ def str_example(inp_eg, tgt_eg, pred_eg, step=20):
 
 
 def plot_output(output_eg, inp_eg, pred_eg, save=None):
-    plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(20, 20))
     max_len = len(inp_eg)
-    plt.imshow(output_eg[:max_len, :max_len])
+    plt.imshow(output_eg.detach().cpu().numpy()[:max_len, :max_len])
     plt.colorbar()
-    plt.xticks(range(max_len), inp_eg[:max_len], fontsize='xx-small', rotation='vertical')
-    plt.yticks(range(max_len), pred_eg[:max_len], fontsize='xx-small', rotation='horizontal')
+    plt.xticks(range(max_len), inp_eg[:max_len], fontsize='x-small', rotation='vertical')
+    plt.yticks(range(max_len), pred_eg[:max_len], fontsize='x-small', rotation='horizontal')
     if save is None:
         plt.show()
     else:
@@ -269,11 +269,12 @@ def eval(batches, model, tokenizer, log_dir,
 
                 if interactive:
                     eg = np.random.randint(len(tgt))
-                    inp_eg, tgt_eg, pred_eg = inp[eg].split(), tgt[eg].split(), predictions[eg].split()
+                    inp_eg, tgt_eg, pred_eg = inp[eg], tgt[eg], predictions[eg]
                     # print random example
-                    print(str_example(inp_eg, tgt_eg, pred_eg))
+                    print(str_example(inp_eg.split(), tgt_eg.split(), pred_eg.split()))
                     # plot model output
-                    plot_output(output[eg], inp_eg, pred_eg, log_dir)
+                    plot_output(output[eg], tokenizer.tokenize(inp_eg), 
+                                tokenizer.tokenize(pred_eg), log_dir)
 
                     # print current metrics
                     metrics = {
