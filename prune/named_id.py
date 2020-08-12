@@ -164,7 +164,6 @@ def eval(batches, model, tokenizer, log_dir,
         Number of speaker turns in one window
         Defaults to 10.
     """
-    raise NotImplementedError("eval")
     if test:
         weights_path = log_dir.parents[1] / 'weights'
         with open(log_dir.parent / 'params.yml') as file:
@@ -174,7 +173,7 @@ def eval(batches, model, tokenizer, log_dir,
         weights_path = log_dir.parents[0] / 'weights'
         weights = sorted(weights_path.iterdir(), reverse=evergreen)
 
-    criterion = NLLLoss(ignore_index=tokenizer.pad_token_id)
+    criterion = BCELoss(reduction='none')
     tb = SummaryWriter(log_dir)
     best = 0.
     for weight in tqdm(weights, desc='Evaluating'):
@@ -187,16 +186,17 @@ def eval(batches, model, tokenizer, log_dir,
             uris, file_token_acc, file_word_acc = [], [], []
             previous_uri = None
             for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
-                # forward pass
+                # forward pass: (batch_size, sequence_length, sequence_length)
                 output = model(input_ids, audio_similarity, src_key_padding_mask)
                 # manage devices
                 target_ids = target_ids.to(output.device)
 
-                # handle file-level stuff
-                if uri != previous_uri:
+                # TODO handle file-level stuff
+                if False and uri != previous_uri:
                     # compute file-level accuracy
                     if previous_uri is not None:
                         uris.append(previous_uri)
+                        # TODO use torch.mode on prediction_ids rather than argmax on scores
                         file_pred_ids = argmax(file_output, dim=1)
 
                         # compute token accuracy
@@ -223,8 +223,9 @@ def eval(batches, model, tokenizer, log_dir,
                                             dtype=target_ids.dtype,
                                             device=target_ids.device)
 
-                # save target and output for future file-level accuracy
+                # TODO save target and output for future file-level accuracy
                 for t, o in zip(target_ids, output):
+                    break
                     for start, end in windows[i: i+window_size]:
                         # trim to max_length
                         shifted_start, shifted_end = min(start-shift, max_length), min(end-shift, max_length)
@@ -237,8 +238,10 @@ def eval(batches, model, tokenizer, log_dir,
                     i += step_size
                     # shift between batch and original file
                     shift = windows[i][0]#start
-                # get model prediction per token
-                prediction_ids = argmax(output, dim=2)
+                # get model prediction per token: (batch_size, sequence_length)
+                relative_out = argmax(output, dim=2)
+                # retrieve token ids from input (batch_size, sequence_length)
+                prediction_ids = input_ids[relative_out]
 
                 # compute batch-token accuracy
                 epoch_token_acc += token_accuracy(target_ids, prediction_ids, tokenizer.pad_token_id)
@@ -247,12 +250,9 @@ def eval(batches, model, tokenizer, log_dir,
                 predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
                 epoch_word_acc += batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
 
-                # compute loss
-                #   reshape output like (batch_size * sequence_length, vocab_size)
-                #   and target_ids like (batch_size * sequence_length)
-                output = output.reshape(-1, model.vocab_size)
-                target_ids = target_ids.reshape(-1)
+                # calculate loss
                 loss = criterion(output, target_ids)
+                loss = reduce_loss(loss, tgt_key_padding_mask)
                 epoch_loss += loss.item()
                 previous_uri = uri
 
@@ -269,33 +269,33 @@ def eval(batches, model, tokenizer, log_dir,
                     print(tabulate(metrics, headers='keys'))
                     breakpoint()
 
-            # compute file-level accuracy for the last file
-            uris.append(previous_uri)
-            file_pred_ids = argmax(file_output, dim=1)
-            file_token_acc.append(token_accuracy(file_target_ids,
-                                                 file_pred_ids,
-                                                 tokenizer.pad_token_id))
-            file_target = tokenizer.batch_decode(file_target_ids.unsqueeze(0),
-                                                 clean_up_tokenization_spaces=False)
-            file_pred = tokenizer.batch_decode(file_pred_ids.unsqueeze(0),
-                                               clean_up_tokenization_spaces=False)
-            file_word_acc.append(batch_word_accuracy(file_target, file_pred,
-                                                     pad=tokenizer.pad_token))
-
-            # average file-accuracies
-            uris.append('TOTAL')
-            file_token_acc.append(np.mean(file_token_acc))
-            file_word_acc.append(np.mean(file_word_acc))
-            # print file-accuracies
-            if test:
-                results = tabulate(zip(uris, file_token_acc, file_word_acc),
-                                   headers=['uri', 'token-level', 'word-level'],
-                                   tablefmt='latex')
-                print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
+            # TODO compute file-level accuracy for the last file
+            # uris.append(previous_uri)
+            # file_pred_ids = argmax(file_output, dim=1)
+            # file_token_acc.append(token_accuracy(file_target_ids,
+            #                                      file_pred_ids,
+            #                                      tokenizer.pad_token_id))
+            # file_target = tokenizer.batch_decode(file_target_ids.unsqueeze(0),
+            #                                      clean_up_tokenization_spaces=False)
+            # file_pred = tokenizer.batch_decode(file_pred_ids.unsqueeze(0),
+            #                                    clean_up_tokenization_spaces=False)
+            # file_word_acc.append(batch_word_accuracy(file_target, file_pred,
+            #                                          pad=tokenizer.pad_token))
+            #
+            # # average file-accuracies
+            # uris.append('TOTAL')
+            # file_token_acc.append(np.mean(file_token_acc))
+            # file_word_acc.append(np.mean(file_word_acc))
+            # # print file-accuracies
+            # if test:
+            #     results = tabulate(zip(uris, file_token_acc, file_word_acc),
+            #                        headers=['uri', 'token-level', 'word-level'],
+            #                        tablefmt='latex')
+            #     print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
 
             # log tensorboard
-            tb.add_scalar('Accuracy/eval/file/token', file_token_acc[-1], epoch)
-            tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
+            # tb.add_scalar('Accuracy/eval/file/token', file_token_acc[-1], epoch)
+            # tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
             tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
             tb.add_scalar('Accuracy/eval/batch/token', epoch_token_acc / len(batches), epoch)
             epoch_word_acc /= len(batches)
@@ -304,6 +304,16 @@ def eval(batches, model, tokenizer, log_dir,
                 best = epoch_word_acc
                 with open(log_dir / 'params.yml', 'w') as file:
                     yaml.dump({"accuracy": best, "epoch": epoch}, file)
+
+
+def reduce_loss(loss, tgt_key_padding_mask):
+    """Masks loss using tgt_key_padding_mask then mean-reduce"""
+    # mask loss
+    tgt_key_padding_mask = tgt_key_padding_mask.bool()
+    loss[~tgt_key_padding_mask] = 0.
+    # average loss: FIXME use sum/tgt_key_padding_mask.nonzero ?
+    loss = loss.mean()
+    return loss
 
 
 def train(batches, model, tokenizer, train_dir=Path.cwd(),
@@ -381,11 +391,8 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
 
             # calculate loss
             loss = criterion(output, target_ids)
-            # mask loss
-            tgt_key_padding_mask = tgt_key_padding_mask.bool()
-            loss[~tgt_key_padding_mask] = 0.
-            # average loss: FIXME use sum/tgt_key_padding_mask.nonzero ?
-            loss = loss.mean()
+            # mask and reduce loss
+            loss = reduce_loss(loss, tgt_key_padding_mask)
             loss.backward()
 
             if max_grad_norm is not None:
