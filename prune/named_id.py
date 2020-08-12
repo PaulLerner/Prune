@@ -305,12 +305,8 @@ def eval(batches, model, tokenizer, log_dir,
 
 def reduce_loss(loss, tgt_key_padding_mask):
     """Masks loss using tgt_key_padding_mask then mean-reduce"""
-    # mask loss
-    tgt_key_padding_mask = tgt_key_padding_mask.bool()
-    loss[~tgt_key_padding_mask] = 0.
-    # average loss: FIXME use sum/tgt_key_padding_mask.nonzero ?
-    loss = loss.mean()
-    return loss
+    # mask and average loss
+    return loss[tgt_key_padding_mask.bool()].mean()
 
 
 def train(batches, model, tokenizer, train_dir=Path.cwd(),
