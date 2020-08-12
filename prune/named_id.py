@@ -804,6 +804,8 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     relative_targets = zeros(target_ids.shape + (max_length,))
     for i, (input_id, target_id) in enumerate(zip(input_ids, target_ids)):
         for j, t in enumerate(target_id):
+            if t == tokenizer.pad_token_id:
+                continue
             where = input_id == t
             # speaker name is not mentioned in input -> pad target
             if not where.any():
