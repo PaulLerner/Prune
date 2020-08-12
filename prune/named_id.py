@@ -72,6 +72,7 @@ import Plumcot as PC
 import re
 import numpy as np
 from scipy.spatial.distance import squareform
+from matplotlib import pyplot as plt
 
 from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, zeros_like
 from torch.utils.tensorboard import SummaryWriter
@@ -117,16 +118,27 @@ def batch_word_accuracy(targets: List[str], predictions: List[str], pad='[PAD]')
     return correct/total
 
 
-def str_example(inp, tgt, predictions, eg=None, step=20):
-    eg = np.random.randint(len(tgt)) if eg is None else eg
+def str_example(inp_eg, tgt_eg, pred_eg, step=20):
     example = []
-    inp_eg, tgt_eg, pred_eg = inp[eg].split(), tgt[eg].split(), predictions[eg].split()
     for i in range(0, len(inp_eg) - step, step):
         tab = tabulate((['inp:'] + inp_eg[i:i + step],
                         ['tgt:'] + tgt_eg[i:i + step],
                         ['hyp:'] + pred_eg[i:i + step])).split('\n')
         example += tab[1:]
     return '\n'.join(example)
+
+
+def plot_output(output_eg, inp_eg, pred_eg, save=None):
+    plt.figure(figsize=(10, 10))
+    max_len = len(inp_eg)
+    plt.imshow(output_eg[:max_len, :max_len])
+    plt.colorbar()
+    plt.xticks(range(max_len), inp_eg[:max_len], fontsize='xx-small', rotation='vertical')
+    plt.yticks(range(max_len), pred_eg[:max_len], fontsize='xx-small', rotation='horizontal')
+    if save is None:
+        plt.show()
+    else:
+        plt.savefig(save/"output.png")
 
 
 def eval(batches, model, tokenizer, log_dir,
@@ -256,8 +268,12 @@ def eval(batches, model, tokenizer, log_dir,
                 previous_uri = uri
 
                 if interactive:
+                    eg = np.random.randint(len(tgt))
+                    inp_eg, tgt_eg, pred_eg = inp[eg].split(), tgt[eg].split(), predictions[eg].split()
                     # print random example
-                    print(str_example(inp, tgt, predictions))
+                    print(str_example(inp_eg, tgt_eg, pred_eg))
+                    # plot model output
+                    plot_output(output[eg], inp_eg, pred_eg, log_dir)
 
                     # print current metrics
                     metrics = {
