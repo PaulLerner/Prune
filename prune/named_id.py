@@ -187,13 +187,8 @@ def eval(batches, model, tokenizer, log_dir,
             uris, file_token_acc, file_word_acc = [], [], []
             previous_uri = None
             for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
-                # skip fully-padded batches, this might happen with unknown speakers
-                # FIXME this could be handled in batchify but windows would not be aligned with the current implementation
-                if (target_ids != tokenizer.pad_token_id).nonzero(as_tuple=True)[0].shape[0] == 0:
-                    continue
-
                 # forward pass
-                output = model(input_ids, audio_similarity, tgt_key_padding_mask)
+                output = model(input_ids, audio_similarity, src_key_padding_mask)
                 # manage devices
                 target_ids = target_ids.to(output.device)
 
@@ -602,7 +597,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 for target in target_set:
                     # except if the name is not present in the input text
                     # this would only add noise
-                    if not re.search(target, text_window, flags=re.IGNORECASE):
+                    # TODO make this optional
+                    if False and not re.search(target, text_window, flags=re.IGNORECASE):
                         continue
                     random_name = np.random.choice(names)
                     synthetic_text = re.sub(fr'\b{target}\b', random_name,
@@ -623,6 +619,10 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             for batch in batchify_windows(tokenizer, text_windows, target_windows,
                                           audio_windows, indices, batch_size=batch_size,
                                           mask=mask, audio_masks=audio_masks):
+                # skip fully-padded batches, this might happen with unknown speakers
+                if (batch[-1] != tokenizer.pad_token_id).nonzero(as_tuple=True)[0].shape[0] == 0:
+                    continue
+
                 yield (uri, batch_windows) + batch
     if shuffle:
         # shuffle all windows
@@ -632,7 +632,10 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                            audio_windows, indices, batch_size=batch_size,
                                            mask=mask, audio_masks=audio_masks),
                           desc='Encoding batches'):
-            yield (None, []) + batch
+                # skip fully-padded batches, this might happen with unknown speakers
+                if (batch[-1] != tokenizer.pad_token_id).nonzero(as_tuple=True)[0].shape[0] == 0:
+                    continue
+                yield (None, []) + batch
 
 
 def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
@@ -687,6 +690,7 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
         # encode batch (i.e. tokenize, tensorize...)
         batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch,
                                    mask=mask, audio_mask_batch=audio_mask_batch)
+
         # append original text and target to be able to evaluate
         # (FIXME: this might add extra memory usage, unnecessary to train the model)
         yield (text_batch, target_batch) + batch
@@ -789,6 +793,10 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     # encode target text
     target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch,
                                                          mask=mask, is_pretokenized=False)
+
+    # fix tgt_key_padding_mask for previously padded targets
+    tgt_key_padding_mask[target_ids==tokenizer.pad_token_id] = tokenizer.pad_token_id
+
     return input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
 
