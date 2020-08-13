@@ -131,7 +131,8 @@ def str_example(inp_eg, tgt_eg, pred_eg, step=20):
 def plot_output(output_eg, inp_eg, pred_eg, save=None):
     plt.figure(figsize=(20, 20))
     max_len = len(inp_eg)
-    plt.imshow(output_eg.detach().cpu().numpy()[:max_len, :max_len])
+    # shift by 1 to discard [CLS] and [SEP] tokens
+    plt.imshow(output_eg.detach().cpu().numpy()[:max_len, 1: max_len-1])
     plt.colorbar()
     plt.xticks(range(max_len), inp_eg[:max_len], fontsize='x-small', rotation='vertical')
     plt.yticks(range(max_len), pred_eg[:max_len], fontsize='x-small', rotation='horizontal')
@@ -717,7 +718,8 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
         yield (text_batch, target_batch) + batch
 
 
-def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False):
+def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False, 
+                      add_special_tokens=False):
     """Shortcut function to encode a text (either input or target) batch
     using tokenizer.batch_encode_plus with the appropriate parameters.
 
@@ -730,9 +732,9 @@ def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False):
     mask: bool, optional
         Compute attention_mask according to max_length.
         Defaults to True.
-    is_pretokenized: bool, optional
+    is_pretokenized, add_special_tokens: bool, optional
         see tokenizer.batch_encode_plus
-
+        Defaults to False
     Returns
     -------
     input_ids: Tensor
@@ -742,7 +744,7 @@ def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False):
         None if not mask.
     """
     text_encoded_plus = tokenizer.batch_encode_plus(text_batch,
-                                                    add_special_tokens=False,
+                                                    add_special_tokens=add_special_tokens,
                                                     max_length=max_length,
                                                     pad_to_max_length='right',
                                                     return_tensors='pt',
@@ -809,10 +811,12 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
 
     # tokenize and encode input text: (batch_size, max_length)
     input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch,
-                                                        mask=mask, is_pretokenized=False)
+                                                        mask=mask, is_pretokenized=False,
+                                                        add_special_tokens=True)
     # encode target text: (batch_size, max_length)
     target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch,
-                                                         mask=mask, is_pretokenized=False)
+                                                         mask=mask, is_pretokenized=False,
+                                                         add_special_tokens=False)
 
     # fix tgt_key_padding_mask for previously padded targets
     tgt_key_padding_mask[target_ids==tokenizer.pad_token_id] = tokenizer.pad_token_id
