@@ -8,13 +8,13 @@ named_id.py test <protocol> <validate_dir> [options] [--interactive]
 
 Common options:
 
---subset=<subset>	 Protocol subset, one of 'train', 'development' or 'test'.
+--subset=<subset>    Protocol subset, one of 'train', 'development' or 'test'.
                      Defaults to 'train', 'development' and 'test' in
                      'train', 'validate', and 'test' mode, respectively.
---batch=<batch>		 Batch size [default: 128]
---window=<window>	 Window size [default: 8]
---step=<step>		 Step size [default: 1]
---max_len=<max_len>	 Maximum # of tokens input to BERT. Maximum 512 [default: 256]
+--batch=<batch>      Batch size [default: 128]
+--window=<window>    Window size [default: 8]
+--step=<step>        Step size [default: 1]
+--max_len=<max_len>  Maximum # of tokens input to BERT. Maximum 512 [default: 256]
 --easy               Only keep text windows with named speakers in it.
 --sep_change         Add a special "[SEP]" token between every speech turn.
 
@@ -706,7 +706,6 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
             target_batch.append(target_windows[j])
             audio_window = audio_windows[j]
             if audio_window is not None:
-                # trim to max_length
                 audio_batch.append(audio_window)
                 audio_mask_batch.append(audio_masks[j])
         # encode batch (i.e. tokenize, tensorize...)
