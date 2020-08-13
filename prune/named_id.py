@@ -578,8 +578,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         windows.pop(0)
 
         # compute token windows in the batch
-        # except if augmenting data (FIXME)
-        if not shuffle and augment == 0:
+        # except if augmenting data or in easy mode (FIXME)
+        if not shuffle and augment == 0 and not easy:
             for start, end in windows:
                 end = len(tokenizer.tokenize(" ".join(targets[start:end])))
                 batch_windows.append((start, start+end))
