@@ -9,6 +9,7 @@ setup(
     packages=find_packages(),
     scripts=[
         "prune/named_id.py",
+        "prune/plot_tf.py",
         "prune/stats.py",
         "prune/visualize.py",
         "prune/convert.py"
