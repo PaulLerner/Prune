@@ -504,7 +504,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         Enforces shuffle = False
         Oracles knows who the speaker is if it's name (case-insensitive)
         is mentioned in the input. Most of the other arguments are not relevant
-        in this case, and yields (uri, accuracy) instead of what's documented below.
+        in this case, and yields (uri, accuracy, n_tokens) instead of what's documented below.
         Defaults to False
 
     Yields
@@ -536,13 +536,14 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         names = np.array(names)
 
     text_windows, audio_windows, target_windows, audio_masks = [], [], [], []
-    if oracle and not shuffle:
+    if oracle and shuffle:
         shuffle = False
         warnings.warn("Setting 'shuffle = False' because 'oracle' mode is on.")
     # iterate over protocol subset
     for current_file in tqdm(getattr(protocol, subset)(), desc='Loading transcriptions'):
         if not shuffle:
             oracle_correct, oracle_total = 0, 0
+            n_tokens = []
             batch_windows, text_windows, audio_windows, target_windows, audio_masks = [], [], [], [], []
         transcription = current_file['transcription']
         uri = current_file['uri']
@@ -616,6 +617,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                                            audio_emb)
             # compute oracle-accuracy
             if oracle:
+                n_tokens.append(end-start)
                 for target in targets[start:end]:
                     if target in tokenizer.all_special_tokens:
                         continue
@@ -674,7 +676,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 yield (uri, batch_windows) + batch
         # yield (uri, oracle_accuracy)
         elif oracle:
-            yield uri, oracle_correct/oracle_total
+            yield uri, oracle_correct/oracle_total, n_tokens
     if shuffle:
         # shuffle all windows
         indices = np.arange(len(text_windows))
@@ -972,9 +974,10 @@ if __name__ == '__main__':
              step_size=step_size, window_size=window_size)
     elif args['oracle']:
         subset = args['--subset'] if args['--subset'] else 'test'
-        oracle_accuracy = {}
+        full_name = f"{protocol_name}.{subset}"
         # get oracle accuracy for protocol subset
-        for uri, accuracy in batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
+        uris, accuracies, n_tokens = [], [], []
+        for uri, accuracy, n_token in batchify(tokenizer, protocol, mapping, subset,
                                       batch_size=batch_size,
                                       window_size=window_size,
                                       step_size=step_size,
@@ -984,10 +987,16 @@ if __name__ == '__main__':
                                       augment=augment,
                                       shuffle=False,
                                       oracle=True):
-            oracle_accuracy[uri] = accuracy
-        caption = (f"Oracle accuracy (word/batch-level), {protocol_name}.{subset}, "
-                   f"Windows of {window_size} with {step_size} step.")
+            uris.append(uri)
+            accuracies.append(accuracy)
+            n_tokens.extend(n_token)
+        n_tokens = f"{np.mean(n_tokens):.2f} $\\pm$ {np.std(n_tokens):.2f}"
+        uris.append(full_name)
+        accuracies.append(np.mean(accuracies))
+        caption = (f"Oracle accuracy (word/batch-level), protocol {full_name}, "
+                   f"Windows of {window_size} with {step_size} step. "
+                   f"Average \\# of words: {n_tokens}.")
         # print oracle accuracy
-        print(tabulate(oracle_accuracy, headers='keys', tablefmt='latex'))
+        print(tabulate(zip(uris, accuracies), headers=('uri', 'accuracy'), tablefmt='latex'))
         print("\\caption{%s}" % caption)
 
