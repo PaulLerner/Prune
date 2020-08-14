@@ -5,7 +5,7 @@
 named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
 named_id.py test <protocol> <validate_dir> [options] [--interactive]
-named_id.py oracle <protocol> <experiment_dir> [options]
+named_id.py oracle <protocol> [options]
 
 Common options:
 
