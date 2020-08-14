@@ -201,6 +201,8 @@ def eval(batches, model, tokenizer, log_dir,
         checkpoint = load(weight, map_location=model.src_device_obj)
         epoch = checkpoint["epoch"]
         model.module.load_state_dict(checkpoint['model_state_dict'])
+        # manage device FIXME this should be ok after map_location ??
+        model.module.to(model.src_device_obj)
         model.eval()
         with no_grad():
             epoch_loss, epoch_word_acc = 0., 0.
@@ -380,6 +382,8 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
                           ,map_location=model.src_device_obj)
         assert start_epoch == checkpoint["epoch"]
         model.module.load_state_dict(checkpoint['model_state_dict'])
+        # manage device FIXME this should be ok after map_location ??                 
+        model.module.to(model.src_device_obj)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         # increment epoch
