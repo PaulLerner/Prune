@@ -8,12 +8,7 @@ import numpy as np
 from transformers import BertModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, Module, Linear, \
     Sigmoid, LayerNorm, Identity
-from torch.cuda import device_count
-from torch import device, Tensor
-
-
-DEVICES = [device('cpu')] if device_count() == 0 else \
-          [device(f"cuda:{i}") for i in range(device_count())]
+from torch import Tensor
 
 
 def total_params(module):
@@ -25,15 +20,6 @@ def total_params(module):
         if param.requires_grad:
             trainable += size
     return trainable, total
-
-
-def get_device(module):
-    """Returns device of the first parameter of the module,
-    or None if the module has no parameters
-    """
-    for p in module.parameters():
-        return p.device
-    return None
 
 
 class Identity(Identity):
@@ -92,10 +78,7 @@ class SidNet(Module):
                  dim_feedforward=2048, dropout=0.1, activation='relu'):
 
         super().__init__()
-        # put bert in the first device
-        # and the encoder and output layer in the last (hopefully another) one
-
-        self.bert = BertModel.from_pretrained(bert).to(device=DEVICES[0])
+        self.bert = BertModel.from_pretrained(bert)
         self.hidden_size = self.bert.config.hidden_size
         self.out_size = out_size
         self.encoder_num_layers = num_layers
@@ -111,10 +94,10 @@ class SidNet(Module):
             encoder_norm = LayerNorm(self.hidden_size)
             # init encoder with encoder_layer
             self.encoder = TransformerEncoder(encoder_layer, self.encoder_num_layers,
-                                              encoder_norm).to(device=DEVICES[-1])
+                                              encoder_norm)
 
         # handle classification layer and weight-tying
-        self.linear = Linear(self.hidden_size, self.out_size).to(device=DEVICES[-1])
+        self.linear = Linear(self.hidden_size, self.out_size)
 
         self.activation = Sigmoid()
 
@@ -169,39 +152,30 @@ class SidNet(Module):
             (batch_size, sequence_length, out_size)
             Model's scores after Sigmoid
         """
-        # manage devices
-        device_ = get_device(self.bert)
-        input_ids = input_ids.to(device_)
-        if src_key_padding_mask is not None:
-            src_key_padding_mask = src_key_padding_mask.to(device_)
-            
         # pass input text trough bert
         hidden_states = self.bert(input_ids, src_key_padding_mask)[0]
 
         # reshape BertModel output like (sequence_length, batch_size, hidden_size)
-        # to fit torch.nn.Transformer and manage devices
-        device_ = get_device(self.encoder)
-        hidden_states = hidden_states.transpose(0, 1).to(device_)
+        # to fit torch.nn.Transformer
+        hidden_states = hidden_states.transpose(0, 1)
 
-        # convert HuggingFace mask to PyTorch mask and manage devices
+        # convert HuggingFace mask to PyTorch mask
         #     HuggingFace: 1    -> NOT MASKED, 0     -> MASKED
         #     PyTorch:     True -> MASKED,     False -> NOT MASKED
         if src_key_padding_mask is not None:
-            src_key_padding_mask = ~src_key_padding_mask.bool().to(device_)
+            src_key_padding_mask = ~src_key_padding_mask.bool()
 
         text_output = self.encoder(hidden_states, mask=None,
                                    src_key_padding_mask=src_key_padding_mask)
 
-        # manage devices
-        device_ = get_device(self.linear)
-        text_output = self.linear(text_output.to(device_))
+        text_output = self.linear(text_output)
 
         # reshape output like (batch_size, sequence_length, out_size)
         text_output = text_output.transpose(0, 1)
 
         # weigh output using audio_similarity
         if audio_similarity is not None:
-            audio_similarity = audio_similarity.to(text_output.device)
+            audio_similarity = audio_similarity
             output = audio_similarity @ text_output
         else:
             output = text_output

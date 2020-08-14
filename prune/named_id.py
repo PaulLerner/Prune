@@ -79,7 +79,7 @@ from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
-from torch.nn import BCELoss
+from torch.nn import BCELoss, DataParallel
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
 
@@ -907,7 +907,7 @@ if __name__ == '__main__':
         config = load_config(train_dir.parents[0])
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = SidNet(BERT, max_length, **architecture)
+        model = DataParallel(SidNet(BERT, max_length, **architecture))
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
                                 batch_size=batch_size,
@@ -931,7 +931,7 @@ if __name__ == '__main__':
 
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = SidNet(BERT, max_length, **architecture)
+        model = DataParallel(SidNet(BERT, max_length, **architecture))
 
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
@@ -956,7 +956,7 @@ if __name__ == '__main__':
 
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = SidNet(BERT, max_length, **architecture)
+        model = DataParallel(SidNet(BERT, max_length, **architecture))
 
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
