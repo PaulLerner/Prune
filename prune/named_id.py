@@ -198,7 +198,7 @@ def eval(batches, model, tokenizer, log_dir,
     tb = SummaryWriter(log_dir)
     best = 0.
     for weight in tqdm(weights, desc='Evaluating'):
-        checkpoint = load(weight)
+        checkpoint = load(weight, map_location=model.src_device_obj)
         epoch = checkpoint["epoch"]
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
@@ -376,7 +376,8 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     weights_path = train_dir / 'weights'
     # load previous checkpoint
     if start_epoch is not None:
-        checkpoint = load(weights_path / EPOCH_FORMAT.format(start_epoch))
+        checkpoint = load(weights_path / EPOCH_FORMAT.format(start_epoch)
+                          ,map_location=model.src_device_obj)
         assert start_epoch == checkpoint["epoch"]
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -384,12 +385,14 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         # increment epoch
         start_epoch += 1
     else:
+        # put parallelized module to model.src_device_obj
+        model.module.to(model.src_device_obj)
         # be careful not to erase previous weights
         weights_path.mkdir(exist_ok=False)
         # defaults to start from 0
         start_epoch = 0
 
-    model.freeze(freeze)
+    model.module.freeze(freeze)
     model.train()
 
     criterion = BCELoss(reduction='none')
