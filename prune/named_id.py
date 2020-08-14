@@ -200,7 +200,7 @@ def eval(batches, model, tokenizer, log_dir,
     for weight in tqdm(weights, desc='Evaluating'):
         checkpoint = load(weight, map_location=model.src_device_obj)
         epoch = checkpoint["epoch"]
-        model.load_state_dict(checkpoint['model_state_dict'])
+        model.module.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         with no_grad():
             epoch_loss, epoch_word_acc = 0., 0.
@@ -371,7 +371,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         Starts training back at start_epoch.
         Defaults to raise an error if training in an existing directory
     """
-    optimizer = Adam(model.parameters(), lr=lr)
+    optimizer = Adam(model.module.parameters(), lr=lr)
 
     weights_path = train_dir / 'weights'
     # load previous checkpoint
@@ -379,7 +379,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         checkpoint = load(weights_path / EPOCH_FORMAT.format(start_epoch)
                           ,map_location=model.src_device_obj)
         assert start_epoch == checkpoint["epoch"]
-        model.load_state_dict(checkpoint['model_state_dict'])
+        model.module.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         # increment epoch
@@ -418,7 +418,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
             loss.backward()
 
             if max_grad_norm is not None:
-                clip_grad_norm_(model.parameters(), max_grad_norm)
+                clip_grad_norm_(model.module.parameters(), max_grad_norm)
 
             optimizer.step()
             epoch_loss += loss.item()
@@ -429,7 +429,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         if (epoch+1) % save_every == 0:
             save({
                 'epoch': epoch,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': model.module.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': epoch_loss
             }, weights_path / EPOCH_FORMAT.format(epoch))
