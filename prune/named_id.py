@@ -128,14 +128,16 @@ def str_example(inp_eg, tgt_eg, pred_eg, step=20):
     return '\n'.join(example)
 
 
-def plot_output(output_eg, inp_eg, pred_eg, save=None):
+def plot_output(output_eg, inp_eg, tgt_eg, save=None):
+    # merge target and input into a single list
+    tgt_eg = [f"{i} ({t})" for i, t in zip(inp_eg, tgt_eg)]
     plt.figure(figsize=(20, 20))
     max_len = len(inp_eg)
     # shift by 1 to discard [CLS] and [SEP] tokens
     plt.imshow(output_eg.detach().cpu().numpy()[:max_len, 1: max_len-1])
     plt.colorbar()
     plt.xticks(range(max_len), inp_eg[:max_len], fontsize='x-small', rotation='vertical')
-    plt.yticks(range(max_len), pred_eg[:max_len], fontsize='x-small', rotation='horizontal')
+    plt.yticks(range(max_len), tgt_eg[:max_len], fontsize='x-small', rotation='horizontal')
     if save is None:
         plt.show()
     else:
@@ -275,7 +277,7 @@ def eval(batches, model, tokenizer, log_dir,
                     print(str_example(inp_eg.split(), tgt_eg.split(), pred_eg.split()))
                     # plot model output
                     plot_output(output[eg], tokenizer.tokenize(inp_eg), 
-                                tokenizer.tokenize(pred_eg), log_dir)
+                                tokenizer.tokenize(tgt_eg), log_dir)
 
                     # print current metrics
                     metrics = {
