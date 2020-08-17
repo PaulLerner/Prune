@@ -137,8 +137,8 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
         merge.append(f"{token} ({tgt_eg[i]})")
         if not token.startswith('##'):
             i += 1
-    plt.figure(figsize=(20, 20))
     max_len = len(inp_eg)
+    plt.figure(figsize=(max_len//6, max_len//6))
     # shift by 1 to discard [CLS] and [SEP] tokens
     plt.imshow(output_eg.detach().cpu().numpy()[:max_len, 1: max_len-1])
     plt.colorbar()
