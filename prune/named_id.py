@@ -6,6 +6,7 @@ named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
 named_id.py test <protocol> <validate_dir> [options] [--interactive]
 named_id.py oracle <protocol> [options]
+named_id.py visualize <protocol> <validate_dir> [options]
 
 Common options:
 
@@ -74,8 +75,10 @@ import re
 import numpy as np
 from scipy.spatial.distance import squareform
 from matplotlib import pyplot as plt
+from sklearn.manifold import TSNE
 
-from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, zeros_like
+from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, \
+    zeros_like, LongTensor
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
@@ -875,6 +878,47 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     return input_ids, relative_targets, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
 
+def visualize(words, model, tokenizer, validate_dir):
+    """
+    Parameters
+    ----------
+    words: Iterable[str]
+    model: SidNet
+    tokenizer: BertTokenizer
+    validate_dir: Path
+    """
+    # load model from validate_dir
+    with open(validate_dir / 'params.yml') as file:
+        epoch = yaml.load(file, Loader=yaml.SafeLoader)["epoch"]
+    weight = validate_dir.parent / 'weights' / EPOCH_FORMAT.format(epoch)
+    checkpoint = load(weight, map_location=model.src_device_obj)
+    epoch = checkpoint["epoch"]
+    model.module.load_state_dict(checkpoint['model_state_dict'])
+    model.module.to(model.src_device_obj)
+    model.eval()
+
+    # tokenize and encode words
+    tokens = tokenizer.tokenize(' '.join(words))
+    input_ids = LongTensor(tokenizer.convert_tokens_to_ids(tokens)).unsqueeze(0)
+
+    # get token embeddings
+    embeddings = model.module.bert.embeddings.word_embeddings(input_ids)
+    embeddings = embeddings.squeeze(0).detach().cpu().numpy()
+
+    # apply t-SNE
+    tsne = TSNE(n_components=2, metric="cosine")
+    embeddings_2d = tsne.fit_transform(embeddings)
+
+    # plot the result
+    assert len(tokens) == embeddings_2d.shape[0], \
+        f"Shape mismatch between token ({len(tokens)}) and embeddings ({embeddings_2d.shape})"
+    plt.figure(figsize=(15, 15))
+    plt.scatter(*embeddings_2d.T)
+    for token, xy in zip(tokens, embeddings_2d):
+        plt.annotate(token, xy)
+    plt.savefig(validate_dir / "embeddings_TSNE.png")
+
+
 def load_config(parent_path):
     """Returns empty dict if unable to load config file"""
     config_path = parent_path / 'config.yml'
@@ -979,6 +1023,17 @@ if __name__ == '__main__':
         eval(batches, model, tokenizer, test_dir,
              test=True, interactive=interactive,
              step_size=step_size, window_size=window_size)
+    elif args['visualize']:
+        validate_dir = Path(args['<validate_dir>'])
+        config = load_config(validate_dir.parents[1])
+        architecture = config.get('architecture', {})
+        audio = config.get('audio')
+        model = DataParallel(SidNet(BERT, max_length, **architecture))
+        # get list of names
+        with open(mapping) as file:
+            mapping = json.load(file)
+        words = set(mapping.values())
+        visualize(words, model, tokenizer, validate_dir)
     elif args['oracle']:
         subset = args['--subset'] if args['--subset'] else 'test'
         full_name = f"{protocol_name}.{subset}"
