@@ -899,7 +899,8 @@ def visualize(words, model, tokenizer, validate_dir):
 
     # tokenize and encode words
     tokens = tokenizer.tokenize(' '.join(words))
-    input_ids = LongTensor(tokenizer.convert_tokens_to_ids(tokens)).unsqueeze(0)
+    input_ids = tokenizer.convert_tokens_to_ids(tokens)
+    input_ids = LongTensor(input_ids).unsqueeze(0).to(model.src_device_obj)
 
     # get token embeddings
     embeddings = model.module.bert.embeddings.word_embeddings(input_ids)
@@ -916,7 +917,9 @@ def visualize(words, model, tokenizer, validate_dir):
     plt.scatter(*embeddings_2d.T)
     for token, xy in zip(tokens, embeddings_2d):
         plt.annotate(token, xy)
-    plt.savefig(validate_dir / "embeddings_TSNE.png")
+    save_path = validate_dir / "embeddings_TSNE.png"
+    plt.savefig(save_path)
+    print(f"Succesfully saved figure to {save_path}")
 
 
 def load_config(parent_path):
