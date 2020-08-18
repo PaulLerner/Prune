@@ -82,7 +82,7 @@ from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
-from torch.nn import BCELoss, DataParallel, Softmax
+from torch.nn import BCELoss, DataParallel
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
 
@@ -223,7 +223,6 @@ def eval(batches, model, tokenizer, log_dir,
     criterion = BCELoss(reduction='none')
     tb = SummaryWriter(log_dir)
     best = 0.
-    softmax = Softmax(dim=2)
     for weight in tqdm(weights, desc='Evaluating'):
         checkpoint = load(weight, map_location=model.src_device_obj)
         epoch = checkpoint["epoch"]
@@ -291,8 +290,7 @@ def eval(batches, model, tokenizer, log_dir,
                     shift = windows[i][0]#start
 
                 # get model prediction per token: (batch_size, sequence_length)
-                # softmax to get pseudo-probability
-                confidence, relative_out = softmax(output).max(dim=2)
+                confidence, relative_out = output.max(dim=2)
 
                 # retrieve token ids from input (batch_size, sequence_length) and manage device
                 prediction_ids = zeros_like(input_ids, device=output.device)
