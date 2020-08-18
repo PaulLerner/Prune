@@ -82,7 +82,7 @@ from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
-from torch.nn import BCELoss, DataParallel
+from torch.nn import BCELoss, DataParallel, Softmax
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
 
@@ -93,6 +93,7 @@ manual_seed(0)
 
 EPOCH_FORMAT = '{:04d}.tar'
 BERT = 'bert-base-cased'
+WP_START = '##'
 
 # constant paths
 DATA_PATH = Path(PC.__file__).parent / 'data'
@@ -109,17 +110,39 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
     return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
 
-def batch_word_accuracy(targets: List[str], predictions: List[str], pad='[PAD]'):
+def batch_word_accuracy(targets: List[str], predictions: List[str], pad='[PAD]', confidence=[[]]):
+    """
+    Parameters
+    ----------
+    targets : List[str]
+    predictions : List[str]
+    pad : str, optional
+        Target value to be ignored.
+        Defaults to '[PAD]'
+    confidence : List[List[float]]
+        Confidence of the model in it's prediction
+
+    Returns
+    -------
+    accuracy : float
+    correct_conf, wrong_conf: List[float]
+        Confidence of the model in correct and wrong predictions, respectively.
+    """
     correct, total = 0, 0
-    for target, prediction in zip(targets, predictions):
+    correct_conf, wrong_conf = [], []
+    for target, prediction, conf in zip_longest(targets, predictions, confidence, fillvalue=[]):
         target, prediction = target.split(), prediction.split()
-        for t, p in zip_longest(target, prediction, fillvalue=pad):
+        for t, p, c in zip_longest(target, prediction, conf, fillvalue=pad):
             if t == pad:
                 continue
             if t == p:
                 correct += 1
+                if c != pad:
+                    correct_conf.append(c)
+            elif c != pad:
+                wrong_conf.append(c)
             total += 1
-    return correct/total
+    return correct/total, correct_conf, wrong_conf
 
 
 def str_example(inp_eg, tgt_eg, pred_eg, step=20):
@@ -138,7 +161,7 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
     i = 0
     for token in inp_eg:
         merge.append(f"{token} ({tgt_eg[i]})")
-        if not token.startswith('##'):
+        if not token.startswith(WP_START):
             i += 1
     max_len = len(inp_eg)
     plt.figure(figsize=(max_len//6, max_len//6))
@@ -200,6 +223,7 @@ def eval(batches, model, tokenizer, log_dir,
     criterion = BCELoss(reduction='none')
     tb = SummaryWriter(log_dir)
     best = 0.
+    softmax = Softmax(dim=2)
     for weight in tqdm(weights, desc='Evaluating'):
         checkpoint = load(weight, map_location=model.src_device_obj)
         epoch = checkpoint["epoch"]
@@ -209,6 +233,7 @@ def eval(batches, model, tokenizer, log_dir,
         model.eval()
         with no_grad():
             epoch_loss, epoch_word_acc = 0., 0.
+            correct_conf, wrong_conf = [], []
             uris, file_token_acc, file_word_acc = [], [], []
             previous_uri = None
             for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
@@ -264,16 +289,33 @@ def eval(batches, model, tokenizer, log_dir,
                     i += step_size
                     # shift between batch and original file
                     shift = windows[i][0]#start
+
                 # get model prediction per token: (batch_size, sequence_length)
-                relative_out = argmax(output, dim=2)
+                # softmax to get pseudo-probability
+                confidence, relative_out = softmax(output).max(dim=2)
+
                 # retrieve token ids from input (batch_size, sequence_length) and manage device
                 prediction_ids = zeros_like(input_ids, device=output.device)
                 for j, (input_window_id, relative_window_out) in enumerate(zip(input_ids, relative_out)):
                     prediction_ids[j] = input_window_id[relative_window_out]
 
                 # decode and compute word accuracy
-                predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
-                epoch_word_acc += batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
+                predictions, aligned_confidence = [], []
+                for j, prediction_id in enumerate(prediction_ids):
+                    aligned_confidence_j = []
+                    tokens = tokenizer.convert_ids_to_tokens(prediction_id)
+                    predictions.append(tokenizer.convert_tokens_to_string(tokens))
+                    for k, token in enumerate(tokens):
+                        # filter out sub-words
+                        if not token.startswith(WP_START):
+                            aligned_confidence_j.append(confidence[j, k].item())
+                    aligned_confidence.append(aligned_confidence_j)
+                tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
+                batch_word_acc, correct_c, wrong_c = batch_word_accuracy(tgt, predictions,
+                                                                         tokenizer.pad_token, aligned_confidence)
+                epoch_word_acc += batch_word_acc
+                correct_conf += correct_c
+                wrong_conf += wrong_c
 
                 # calculate loss
                 loss = criterion(output, target_ids)
@@ -332,6 +374,16 @@ def eval(batches, model, tokenizer, log_dir,
                 best = epoch_word_acc
                 with open(log_dir / 'params.yml', 'w') as file:
                     yaml.dump({"accuracy": best, "epoch": epoch}, file)
+            if test:
+                # plot distribution of wrong_conf and correct_conf
+                bins = 50
+                plt.figure(figsize=(16, 10))
+                _, bins, _ = plt.hist(correct_conf, normed=True, bins=bins, label='Correct', alpha=.5)
+                plt.hist(wrong_conf, normed=True, bins=bins, label='Wrong', alpha=.5)
+                plt.xlabel('Confidence')
+                plt.ylabel('Density')
+                plt.legend()
+                plt.savefig(log_dir/"confidence_histogram.png")
 
 
 def reduce_loss(loss, tgt_key_padding_mask):
@@ -713,7 +765,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
         if i >= max_length:
             break
         # sub-word -> add audio representation of the previous word
-        if tgt.startswith('##'):
+        if tgt.startswith(WP_START):
             aligned_audio.append(previous_a)
         else:
             if a is None:
