@@ -6,7 +6,7 @@ named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
 named_id.py test <protocol> <validate_dir> [options] [--interactive]
 named_id.py oracle <protocol> [options]
-named_id.py visualize <protocol> <validate_dir> [options]
+named_id.py visualize <protocol> [<validate_dir>]
 
 Common options:
 
@@ -878,7 +878,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     return input_ids, relative_targets, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
 
 
-def visualize(words, model, tokenizer, validate_dir):
+def visualize(words, model, tokenizer, validate_dir=None):
     """
     Parameters
     ----------
@@ -888,12 +888,16 @@ def visualize(words, model, tokenizer, validate_dir):
     validate_dir: Path
     """
     # load model from validate_dir
-    with open(validate_dir / 'params.yml') as file:
-        epoch = yaml.load(file, Loader=yaml.SafeLoader)["epoch"]
-    weight = validate_dir.parent / 'weights' / EPOCH_FORMAT.format(epoch)
-    checkpoint = load(weight, map_location=model.src_device_obj)
-    epoch = checkpoint["epoch"]
-    model.module.load_state_dict(checkpoint['model_state_dict'])
+    if validate_dir is not None:
+        with open(validate_dir / 'params.yml') as file:
+            epoch = yaml.load(file, Loader=yaml.SafeLoader)["epoch"]
+        weight = validate_dir.parent / 'weights' / EPOCH_FORMAT.format(epoch)
+        checkpoint = load(weight, map_location=model.src_device_obj)
+        epoch = checkpoint["epoch"]
+        model.module.load_state_dict(checkpoint['model_state_dict'])
+    # else keep pre-trained BERT
+    else:
+        validate_dir = Path.cwd()
     model.module.to(model.src_device_obj)
     model.eval()
 
@@ -1027,10 +1031,13 @@ if __name__ == '__main__':
              test=True, interactive=interactive,
              step_size=step_size, window_size=window_size)
     elif args['visualize']:
-        validate_dir = Path(args['<validate_dir>'])
-        config = load_config(validate_dir.parents[1])
+        validate_dir = args['<validate_dir>']
+        if validate_dir is not None:
+            validate_dir = Path(validate_dir)
+            config = load_config(validate_dir.parents[1])
+        else:
+            config = {}
         architecture = config.get('architecture', {})
-        audio = config.get('audio')
         model = DataParallel(SidNet(BERT, max_length, **architecture))
         # get list of names
         with open(mapping) as file:
