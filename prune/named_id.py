@@ -695,10 +695,10 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                            audio_windows, indices, batch_size=batch_size,
                                            mask=mask, audio_masks=audio_masks),
                           desc='Encoding batches'):
-                # skip fully-padded batches, this might happen with unknown speakers
-                if (batch[-1] == tokenizer.pad_token_id).all():
-                    continue
-                yield (None, []) + batch
+            # skip fully-padded batches, this might happen with unknown speakers
+            if (batch[-1] == tokenizer.pad_token_id).all():
+                continue
+            yield (None, []) + batch
 
 
 def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
