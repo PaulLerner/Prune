@@ -376,8 +376,8 @@ def eval(batches, model, tokenizer, log_dir,
                 # plot distribution of wrong_conf and correct_conf
                 bins = 50
                 plt.figure(figsize=(16, 10))
-                _, bins, _ = plt.hist(correct_conf, normed=True, bins=bins, label='Correct', alpha=.5)
-                plt.hist(wrong_conf, normed=True, bins=bins, label='Wrong', alpha=.5)
+                _, bins, _ = plt.hist(correct_conf, density=True, bins=bins, label='Correct', alpha=.5)
+                plt.hist(wrong_conf, density=True, bins=bins, label='Wrong', alpha=.5)
                 plt.xlabel('Confidence')
                 plt.ylabel('Density')
                 plt.legend()
