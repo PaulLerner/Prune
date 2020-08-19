@@ -109,10 +109,10 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
     return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
 
-def batch_word_accuracy(targets: List[str], predictions: List[str], pad='[PAD]'):
+def batch_word_accuracy(targets: List[List[str]], predictions: List[str], pad='[PAD]'):
     correct, total = 0, 0
     for target, prediction in zip(targets, predictions):
-        target, prediction = target.split(), prediction.split()
+        prediction = prediction.split()
         for t, p in zip_longest(target, prediction, fillvalue=pad):
             if t == pad:
                 continue
@@ -285,10 +285,10 @@ def eval(batches, model, tokenizer, log_dir,
                     eg = np.random.randint(len(tgt))
                     inp_eg, tgt_eg, pred_eg = inp[eg], tgt[eg], predictions[eg]
                     # print random example
-                    print(str_example(inp_eg.split(), tgt_eg.split(), pred_eg.split()))
+                    print(str_example(inp_eg, tgt_eg, pred_eg.split()))
                     # plot model output
                     plot_output(output[eg], tokenizer.tokenize(inp_eg), 
-                                tgt_eg.split(), log_dir)
+                                tgt_eg, log_dir)
 
                     # print current metrics
                     metrics = {
@@ -537,13 +537,16 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         - uri: str,
           file-identifier of the batch and is set to None if shuffle, as batch
           are then file-heterogeneous
-        - batch_windows: List[Tuple[int]]
+        - windows: List[Tuple[int]]
           indices of the start and end tokens index of the speaker turns in the batch
-          Empty if shuffling or augmenting data
+          Beware it's not accurate in easy mode or when augmenting data
+          Empty if shuffling
     """
-    assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
     with open(mapping) as file:
         mapping = json.load(file)
+    # replace target name by its first word-piece
+    for norm_name, common_name in mapping.items():
+        mapping[norm_name] = tokenizer.tokenize(common_name)[0]
 
     if audio_emb is not None:
         audio_emb = Wrapper(audio_emb)
@@ -553,7 +556,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         names = []
         for character_file in CHARACTERS_PATH:
             with open(character_file) as file:
-                names += [line.split(',')[3].split()[0]
+                # replace target name by its first word-piece
+                names += [tokenizer.tokenize(line.split(',')[3].split()[0])[0]
                           for line in file.read().split("\n") if line != '']
         names = np.array(names)
 
@@ -566,7 +570,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         if not shuffle:
             oracle_correct, oracle_total = 0, 0
             n_tokens = []
-            batch_windows, text_windows, audio_windows, target_windows, audio_masks = [], [], [], [], []
+            text_windows, audio_windows, target_windows, audio_masks = [], [], [], []
         transcription = current_file['transcription']
         uri = current_file['uri']
 
@@ -607,9 +611,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             # if we don't have a proper target we should mask the loss function
             target = mapping.get(word._.speaker, tokenizer.pad_token)
 
-            # handle basic tokenization (e.g. punctuation) before Word-Piece
-            # in order to align input text and speakers
-            for token in tokenizer.basic_tokenizer.tokenize(word.text):
+            # handle tokenization in order to align input text and speakers
+            for token in tokenizer.tokenize(word.text):
                 tokens.append(token)
                 targets.append(target)
                 audio.append(segment)
@@ -618,36 +621,26 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         windows.append((start, end))
         windows.pop(0)
 
-        # compute token windows in the batch
-        # except if augmenting data or in easy mode (FIXME)
-        if not shuffle and augment == 0 and not easy:
-            for start, end in windows:
-                end = len(tokenizer.tokenize(" ".join(targets[start:end])))
-                batch_windows.append((start, start+end))
-
         # slide through the transcription speaker turns w.r.t. window_size, step_size
         # filter out windows w.r.t. easy
         # and augment them w.t.t. augment
         for i in range(0, len(windows) - window_size + 1, step_size):
             start, _ = windows[i]
             _, end = windows[i + window_size - 1]
-            text_window = " ".join(tokens[start:end])
-            target_window = " ".join(targets[start:end])
-            audio_window, audio_mask = align_audio_targets(tokenizer,
-                                                           audio[start:end],
-                                                           target_window,
-                                                           audio_emb)
+            text_window = tokens[start:end]
+            target_window = targets[start:end]
+            audio_window, audio_mask = mask_audio(audio[start:end], audio_emb)
             # compute oracle-accuracy
             if oracle:
                 n_tokens.append(end-start)
-                for target in targets[start:end]:
+                for target in target_window:
                     if target in tokenizer.all_special_tokens:
                         continue
                     if re.search(target, text_window, flags=re.IGNORECASE):
                         oracle_correct += 1
                     oracle_total += 1
             # set of actual targets (i.e. excluding [PAD], [SEP], etc.)
-            target_set = sorted(set(targets[start:end]) - set(tokenizer.all_special_tokens))
+            target_set = sorted(set(target_window) - set(tokenizer.all_special_tokens))
 
             # easy mode -> Only keep windows with named speakers in it
             if easy and not any_in_text(target_set, text_window):
@@ -662,25 +655,14 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
 
             # add `augment` windows of synthetic data
             for augmentation in range(abs(augment)):
-                synthetic_text = text_window
-                synthetic_targets = target_window
+                synthetic_text = np.array(text_window)
+                synthetic_targets = np.array(target_window)
                 # augment data by replacing
                 # speaker names in input text and target by a random name
                 for target in target_set:
-                    # except if the name is not present in the input text
-                    # this would only add noise
-                    # TODO make this optional
-                    if False and not re.search(target, text_window, flags=re.IGNORECASE):
-                        continue
                     random_name = np.random.choice(names)
-                    synthetic_text = re.sub(fr'\b{target}\b', random_name,
-                                            synthetic_text, flags=re.IGNORECASE)
-                    synthetic_targets = re.sub(fr'\b{target}\b', random_name,
-                                               synthetic_targets, flags=re.IGNORECASE)
-                audio_window, audio_mask = align_audio_targets(tokenizer,
-                                                               audio[start:end],
-                                                               synthetic_targets,
-                                                               audio_emb)
+                    synthetic_text[synthetic_text==target] = random_name
+                    synthetic_targets[synthetic_targets==target] = random_name
                 audio_windows.append(audio_window)
                 audio_masks.append(audio_mask)
                 text_windows.append(synthetic_text)
@@ -695,7 +677,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 if (batch[-1] == tokenizer.pad_token_id).all():
                     continue
 
-                yield (uri, batch_windows) + batch
+                yield (uri, windows) + batch
         # yield (uri, oracle_accuracy)
         elif oracle:
             yield uri, oracle_correct/oracle_total, n_tokens
@@ -713,27 +695,18 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             yield (None, []) + batch
 
 
-def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
+def mask_audio(audio_window, audio_emb=None):
     """align audio windows with word-piece tokenization"""
     mask = []
     if audio_emb is None:
         return None, mask
-    tokens = tokenizer.tokenize(target_window)
     aligned_audio = []
-    previous_a = np.ones((1, audio_emb.dimension))
-    for i, (a, tgt) in enumerate(zip_longest(audio_window, tokens)):
-        if i >= max_length:
-            break
-        # sub-word -> add audio representation of the previous word
-        if tgt.startswith('##'):
-            aligned_audio.append(previous_a)
-        else:
-            if a is None:
-                mask.append(i)
-                a = np.ones(audio_emb.dimension)
-            a = a.reshape(1, -1)
-            aligned_audio.append(a)
-            previous_a = a
+    for i, a in enumerate(audio_window[:max_length]):
+        if a is None:
+            mask.append(i)
+            a = np.ones(audio_emb.dimension)
+        a = a.reshape(1, -1)
+        aligned_audio.append(a)
     mask = np.array(mask, dtype=int)
     aligned_audio = np.concatenate(aligned_audio)
     return aligned_audio, mask
@@ -815,9 +788,9 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     ----------
     tokenizer: BertTokenizer
         used to tokenize, pad and tensorize text
-    text_batch: List[str]
+    text_batch: List[List[str]]
         (batch_size, ) Input text
-    target_batch: List[str]
+    target_batch: List[List[str]]
         (batch_size, ) Target speaker names
     audio_batch: List[np.ndarray], optional
         (batch_size, ) Audio embeddings of the input text, aligned with target_ids
@@ -863,11 +836,11 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
 
     # tokenize and encode input text: (batch_size, max_length)
     input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch,
-                                                        mask=mask, is_pretokenized=False,
+                                                        mask=mask, is_pretokenized=True,
                                                         add_special_tokens=True)
     # encode target text: (batch_size, max_length)
     target_ids, tgt_key_padding_mask = batch_encode_plus(tokenizer, target_batch,
-                                                         mask=mask, is_pretokenized=False,
+                                                         mask=mask, is_pretokenized=True,
                                                          add_special_tokens=False)
 
     # fix tgt_key_padding_mask for previously padded targets
@@ -966,8 +939,6 @@ if __name__ == '__main__':
 
     # instantiate tokenizer
     tokenizer = BertTokenizer.from_pretrained(BERT)
-    # override basic-tokenization parameter as we need to align speakers with input tokens
-    tokenizer.do_basic_tokenize = False
 
     if args['train']:
         subset = args['--subset'] if args['--subset'] else 'train'
