@@ -325,10 +325,22 @@ def eval(batches, model, tokenizer, log_dir,
             # log tensorboard
             # tb.add_scalar('Accuracy/eval/file/token', file_token_acc[-1], epoch)
             # tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
-            tb.add_scalar('Loss/eval', epoch_loss / len(batches), epoch)
+            epoch_loss /= len(batches)
+            tb.add_scalar('Loss/eval', epoch_loss, epoch)
             epoch_word_acc /= len(batches)
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc, epoch)
-            if epoch_word_acc > best:
+            # print and write metrics
+            if test:
+                metrics = {
+                    'Loss/eval': [epoch_loss],
+                    'Accuracy/eval/batch/word': [epoch_word_acc]
+                }
+                metrics = tabulate(metrics, headers='keys', tablefmt='latex')
+                print(metrics)
+                with open(log_dir / 'eval', 'w') as file:
+                    file.write(metrics)
+            # dump best metrics
+            elif epoch_word_acc > best:
                 best = epoch_word_acc
                 with open(log_dir / 'params.yml', 'w') as file:
                     yaml.dump({"accuracy": best, "epoch": epoch}, file)
