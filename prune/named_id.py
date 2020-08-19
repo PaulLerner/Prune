@@ -606,6 +606,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         windows.append((start, end))
         windows.pop(0)
 
+        visualize_audio(audio, targets, tokenizer.pad_token, uri)
         # compute token windows in the batch
         # except if augmenting data or in easy mode (FIXME)
         if not shuffle and augment == 0 and not easy:
@@ -876,6 +877,34 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
             relative_targets[i, j, where] = 1.
 
     return input_ids, relative_targets, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
+
+
+def visualize_audio(audio, targets, pad= '[PAD]', uri='', log_dir=Path.cwd()):
+    # filter out audio and targets to remove un-reliable values
+    clean_audio, clean_targets = [], []
+    for x, t in zip(audio, targets):
+        if x is not None and t != pad:
+            clean_audio.append(x)
+            clean_targets.append(t)
+
+    # to numpy
+    audio = np.vstack(clean_audio)
+    _, targets = np.unique(clean_targets, return_inverse=True)
+
+    # compute distance matrix
+    distance = squareform(pdist(audio, metric='cosine'))
+
+    # apply t-SNE
+    tsne = TSNE(n_components=2, metric="precomputed")
+    audio_2d = tsne.fit_transform(distance)
+
+    # plot the result
+    plt.figure(figsize=(15, 15))
+    plt.scatter(*audio_2d.T, c=targets)
+    save_path = log_dir / f"{uri}_embeddings_TSNE.png"
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Succesfully saved figure to {save_path}")
 
 
 def visualize(words, model, tokenizer, validate_dir=None):
