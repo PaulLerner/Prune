@@ -78,7 +78,7 @@ from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
 
 from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, \
-    zeros_like, LongTensor
+    zeros_like, LongTensor, ones
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
@@ -211,9 +211,9 @@ def eval(batches, model, tokenizer, log_dir,
             epoch_loss, epoch_word_acc = 0., 0.
             uris, file_token_acc, file_word_acc = [], [], []
             previous_uri = None
-            for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+            for uri, windows, inp, tgt, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass: (batch_size, sequence_length, sequence_length)
-                output = model(input_ids, audio_similarity, src_key_padding_mask)
+                output = model(input_ids, audio_batch, src_key_padding_mask, audio_mask)
                 # manage devices
                 target_ids = target_ids.to(output.device)
 
@@ -422,11 +422,11 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         np.random.shuffle(batches)
 
         epoch_loss = 0.
-        for _, _, _, _, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+        for _, _, _, _, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
             optimizer.zero_grad()
 
             # forward pass
-            output = model(input_ids, audio_similarity, src_key_padding_mask)
+            output = model(input_ids, audio_batch, src_key_padding_mask, audio_mask)
             # manage devices
             target_ids = target_ids.to(output.device)
 
@@ -532,7 +532,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
     Yields
     -------
     batch: Tuple[str, List[Tuple[int]], List[str], Tensor]:
-        (uri, windows, text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        (uri, windows, text_batch, target_batch, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask)
         - see batch_encode_multi.
         - uri: str,
           file-identifier of the batch and is set to None if shuffle, as batch
@@ -715,27 +715,22 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
 
 def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
     """align audio windows with word-piece tokenization"""
-    mask = []
+    # init mask to all items
+    mask = ones(max_length, dtype=bool)
     if audio_emb is None:
         return None, mask
     tokens = tokenizer.tokenize(target_window)
-    aligned_audio = []
-    previous_a = np.ones((1, audio_emb.dimension))
+    # init embeddings to 1
+    aligned_audio = ones(max_length, audio_emb.dimension, dtype=float)
     for i, (a, tgt) in enumerate(zip_longest(audio_window, tokens)):
         if i >= max_length:
             break
         # sub-word -> add audio representation of the previous word
         if tgt.startswith('##'):
-            aligned_audio.append(previous_a)
-        else:
-            if a is None:
-                mask.append(i)
-                a = np.ones(audio_emb.dimension)
-            a = a.reshape(1, -1)
-            aligned_audio.append(a)
-            previous_a = a
-    mask = np.array(mask, dtype=int)
-    aligned_audio = np.concatenate(aligned_audio)
+            aligned_audio[i] = aligned_audio[i-1]
+        elif a is not None:
+            mask[i] = False
+            aligned_audio[i] = a
     return aligned_audio, mask
 
 
@@ -753,21 +748,25 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
     # split windows in batches w.r.t. batch_size
     # keep remainder (i.e. last batch of size <= batch_size)
     for i in range(0, len(indices), batch_size):
-        text_batch, target_batch, audio_batch, audio_mask_batch = [], [], [], []
+        text_batch, target_batch, audio_batch, audio_mask = [], [], [], []
         for j in indices[i: i + batch_size]:
             text_batch.append(text_windows[j])
             target_batch.append(target_windows[j])
             audio_window = audio_windows[j]
             if audio_window is not None:
-                audio_batch.append(audio_window)
-                audio_mask_batch.append(audio_masks[j])
+                audio_batch.append(audio_window.unsqueeze(0))
+                audio_mask.append(audio_masks[j].unsqueeze(0))
+        if len(audio_batch) != 0:
+            audio_batch = cat(audio_batch, dim=0)
+            audio_mask = cat(audio_mask, dim=0)
+        else:
+            audio_batch, audio_mask = None, None
         # encode batch (i.e. tokenize, tensorize...)
-        batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch,
-                                   mask=mask, audio_mask_batch=audio_mask_batch)
+        batch = batch_encode_multi(tokenizer, text_batch, target_batch, mask=mask)
 
         # append original text and target to be able to evaluate
         # (FIXME: this might add extra memory usage, unnecessary to train the model)
-        yield (text_batch, target_batch) + batch
+        yield (text_batch, target_batch, audio_batch, audio_mask) + batch
 
 
 def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False, 
@@ -807,8 +806,7 @@ def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False,
     return input_ids, attention_mask
 
 
-def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
-                       mask=True, audio_mask_batch=None):
+def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
     """Encode input, target text and audio consistently in torch Tensor
 
     Parameters
@@ -819,15 +817,9 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
         (batch_size, ) Input text
     target_batch: List[str]
         (batch_size, ) Target speaker names
-    audio_batch: List[np.ndarray], optional
-        (batch_size, ) Audio embeddings of the input text, aligned with target_ids
-        Defaults to None (model only relies on the text).
     mask: bool, optional
         Compute attention_mask according to max_length.
         Defaults to True.
-    audio_mask_batch: List[np.ndarray], optional
-        indices where audio embeddings are not reliable
-        and thus should not weight model's output
 
     Returns
     -------
@@ -836,31 +828,11 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     relative_targets: Tensor
         (batch_size, max_length, max_length). one-hot target index w.r.t. input_ids
         e.g. "My name is Paul ." -> one-hot([3, 3, 3, 3, 3])
-    audio_similarity: Tensor, optional
-        (batch_size, max_length, max_length). Similarity (e.g. cosine distance)
-        between audio embeddings of words, aligned with target_ids.
-        Defaults to None, indicating that the model should rely only on the text.
     src_key_padding_mask: Tensor, optional
         (batch_size, max_length). Used to mask input_ids.
     tgt_key_padding_mask: Tensor, optional
         (batch_size, max_length). Used to mask relative_targets.
     """
-    if len(audio_batch) != 0:
-        # compute audio similarity matrix (with numpy as torch doesn't have squareform, yet)
-        audio_similarity = np.zeros((len(audio_batch), max_length, max_length), dtype=np.float32)
-        for i, (fX, audio_mask) in enumerate(zip(audio_batch, audio_mask_batch)):
-            d = squareform(pdist(fX, metric='cosine'))
-            # distance to similarity
-            d = 1-d
-            # mask similarity matrix : masked items are only similar to themselves
-            d[audio_mask] = 0
-            d[audio_mask, audio_mask] = 1
-            audio_similarity[i, : d.shape[0], : d.shape[1]] = d
-        # np.ndarray to Tensor
-        audio_similarity = from_numpy(audio_similarity)
-    else:
-        audio_similarity = None
-
     # tokenize and encode input text: (batch_size, max_length)
     input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch,
                                                         mask=mask, is_pretokenized=False,
@@ -887,7 +859,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
             where = where.nonzero().reshape(-1)
             relative_targets[i, j, where] = 1.
 
-    return input_ids, relative_targets, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
+    return input_ids, relative_targets, audio_batch, src_key_padding_mask, tgt_key_padding_mask
 
 
 def visualize(words, model, tokenizer, validate_dir=None):

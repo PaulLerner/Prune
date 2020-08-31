@@ -6,9 +6,9 @@ from typing import List
 import numpy as np
 
 from transformers import BertModel
-from torch.nn import TransformerEncoder, TransformerEncoderLayer, Module, Linear, \
-    Sigmoid, LayerNorm, Identity
-from torch import Tensor
+from torch.nn import TransformerDecoder, TransformerDecoderLayer, Module, Linear, \
+    Sigmoid, LayerNorm, Embedding
+from torch import Tensor, arange
 
 
 def total_params(module):
@@ -20,15 +20,6 @@ def total_params(module):
         if param.requires_grad:
             trainable += size
     return trainable, total
-
-
-class Identity(Identity):
-    """Same as torch.nn.Identity but supports additional arguments
-    as proposed in https://github.com/pytorch/pytorch/issues/42015
-    """
-
-    def forward(self, input: Tensor, *args, **kwargs) -> Tensor:
-        return input
 
 
 class SidNet(Module):
@@ -52,22 +43,24 @@ class SidNet(Module):
         Output size of the model.
         Defaults to 256.
     num_layers: `int`, optional
-        The number of sub-encoder-layers in the encoder.
-        If set to 0 then self.encoder is Identity
-        I.e. Bert output is fed directly to the Linear layer.
+        The number of sub-decoder-layers in the decoder.
+        If set to 0 then Bert output is fed directly to the Linear layer.
         Defaults to 6
     nhead: `int`, optional
-        The number of heads in each encoder layer.
+        The number of heads in each decoder layer.
         Defaults to 8
     dim_feedforward: `int`, optional
-        The dimension of the feedforward network model (FFN) in each encoder layer.
+        The dimension of the feedforward network model (FFN) in each decoder layer.
         Defaults to 2048
     dropout: `float`, optional
-        The dropout rate in-between each block (attn or FFN) of each encoder layer
+        The dropout rate in-between each block (attn or FFN) of each decoder layer
         Defaults to 0.1
     activation: `str`, optional
         The activation function of intermediate layer of the FFN: 'relu' or 'gelu'
          Defaults to 'relu'
+    audio_dim: `int`, optional
+        Dimension of the audio embeddings.
+        Defaults to 512.
     References
     ----------
     Press, O., Wolf, L., 2016.
@@ -75,28 +68,33 @@ class SidNet(Module):
     """
 
     def __init__(self, bert='bert-base-cased', out_size=256, num_layers=6, nhead=8,
-                 dim_feedforward=2048, dropout=0.1, activation='relu'):
+                 dim_feedforward=2048, dropout=0.1, activation='relu', audio_dim=512):
 
         super().__init__()
         self.bert = BertModel.from_pretrained(bert)
         self.hidden_size = self.bert.config.hidden_size
         self.out_size = out_size
-        self.encoder_num_layers = num_layers
-        # 0 encoder layers (=) feed BERT output directly to self.linear
-        if self.encoder_num_layers == 0:
-            self.encoder = Identity()
-        # else init encoder as usual
+        self.audio_dim = audio_dim
+        self.decoder_num_layers = num_layers
+        # 0 decoder layers (=) feed BERT output directly to self.linear
+        if self.decoder_num_layers == 0:
+            self.decoder = None
+        # else init decoder as usual
         else:
-            # init encoder_layer with the parameters
-            encoder_layer = TransformerEncoderLayer(self.hidden_size, nhead, 
+            self.position_ids = None
+            self.position_embeddings = Embedding(self.out_size, self.hidden_size)
+            # linear layer so that audio and text embeddings have the same dimension
+            self.resize_audio = Linear(self.audio_dim, self.hidden_size)
+            # init decoder_layer with the parameters
+            decoder_layer = TransformerDecoderLayer(self.hidden_size, nhead,
                                                     dim_feedforward,
                                                     dropout, activation)
-            encoder_norm = LayerNorm(self.hidden_size)
-            # init encoder with encoder_layer
-            self.encoder = TransformerEncoder(encoder_layer, self.encoder_num_layers,
-                                              encoder_norm)
+            decoder_norm = LayerNorm(self.hidden_size)
+            # init decoder with encoder_layer
+            self.decoder = TransformerDecoder(decoder_layer, self.decoder_num_layers,
+                                              decoder_norm)
 
-        # handle classification layer and weight-tying
+        # handle classification layer
         self.linear = Linear(self.hidden_size, self.out_size)
 
         self.activation = Sigmoid()
@@ -131,19 +129,21 @@ class SidNet(Module):
                          f'{trainable:,d} ({total:,d} total)')
         return '\n'.join(lines)
 
-    def forward(self, input_ids, audio_similarity=None, src_key_padding_mask=None):
+    def forward(self, input_ids, audio=None, src_key_padding_mask=None, audio_mask=None):
         """Apply model
 
         Parameters
         ----------
         input_ids: Tensor
             (batch_size, max_length). Encoded input tokens using BertTokenizer
-        audio_similarity: Tensor, optional
-            (batch_size, max_length, max_length). Similarity (e.g. 1 - cosine distance)
-            between audio embeddings of words, aligned with target_ids.
-            Defaults to None, indicating that the model should rely only on the text.
+        audio: Tensor, optional
+            (batch_size, max_length, audio_dim). audio embeddings of words, aligned with target_ids.
+            Defaults to None.
         src_key_padding_mask: Tensor, optional
             (batch_size, max_length). Used to mask input_ids.
+            Defaults to None (no masking).
+        audio_mask: Tensor, optional
+            (batch_size, max_length). Used to mask audio.
             Defaults to None (no masking).
 
         Returns
@@ -159,26 +159,25 @@ class SidNet(Module):
         # to fit torch.nn.Transformer
         hidden_states = hidden_states.transpose(0, 1)
 
-        # convert HuggingFace mask to PyTorch mask
-        #     HuggingFace: 1    -> NOT MASKED, 0     -> MASKED
-        #     PyTorch:     True -> MASKED,     False -> NOT MASKED
-        if src_key_padding_mask is not None:
-            src_key_padding_mask = ~src_key_padding_mask.bool()
+        # attend text with audio
+        if self.decoder is not None:
+            if audio is None:
+                raise ValueError(f"Expected 'audio' to be a Tensor of embeddings but got '{audio}'. "
+                                 f"See documentation below:\n{self.__doc__}")
+            audio = self.resize_audio(audio)
+            if self.position_ids is None or self.position_ids.shape != input_ids.shape:
+                self.position_ids = arange(input_ids.shape[0]).unsqueeze(0).expand(input_ids.shape)
+            # sum audio embeddings with position embeddings
+            audio += self.position_embeddings(self.position_ids)
+            audio = audio.transpose(0, 1)
+            output = self.decoder(audio, hidden_states, tgt_key_padding_mask=audio_mask)
+        else:
+            output = hidden_states
 
-        text_output = self.encoder(hidden_states, mask=None,
-                                   src_key_padding_mask=src_key_padding_mask)
-
-        text_output = self.linear(text_output)
+        output = self.linear(output)
 
         # reshape output like (batch_size, sequence_length, out_size)
-        text_output = text_output.transpose(0, 1)
-
-        # weigh output using audio_similarity
-        if audio_similarity is not None:
-            audio_similarity = audio_similarity
-            output = audio_similarity @ text_output
-        else:
-            output = text_output
+        output = output.transpose(0, 1)
 
         # activate with Sigmoid
         output = self.activation(output)
