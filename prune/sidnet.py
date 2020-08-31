@@ -166,7 +166,7 @@ class SidNet(Module):
                                  f"See documentation below:\n{self.__doc__}")
             audio = self.resize_audio(audio)
             if self.position_ids is None or self.position_ids.shape != input_ids.shape:
-                self.position_ids = arange(input_ids.shape[0]).unsqueeze(0).expand(input_ids.shape)
+                self.position_ids = arange(input_ids.shape[1], device=input_ids.device).unsqueeze(0).expand(input_ids.shape)
             # sum audio embeddings with position embeddings
             audio += self.position_embeddings(self.position_ids)
             audio = audio.transpose(0, 1)

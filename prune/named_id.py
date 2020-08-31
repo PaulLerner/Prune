@@ -78,7 +78,7 @@ from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
 
 from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, \
-    zeros_like, LongTensor, ones
+    zeros_like, LongTensor, ones, float, cat
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
@@ -413,7 +413,6 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
 
     model.module.freeze(freeze)
     model.train()
-
     criterion = BCELoss(reduction='none')
 
     tb = SummaryWriter(train_dir)
@@ -730,7 +729,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
             aligned_audio[i] = aligned_audio[i-1]
         elif a is not None:
             mask[i] = False
-            aligned_audio[i] = a
+            aligned_audio[i] = Tensor(a)
     return aligned_audio, mask
 
 
@@ -859,7 +858,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
             where = where.nonzero().reshape(-1)
             relative_targets[i, j, where] = 1.
 
-    return input_ids, relative_targets, audio_batch, src_key_padding_mask, tgt_key_padding_mask
+    return input_ids, relative_targets, src_key_padding_mask, tgt_key_padding_mask
 
 
 def visualize(words, model, tokenizer, validate_dir=None):
