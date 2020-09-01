@@ -25,14 +25,13 @@ def total_params(module):
 class SidNet(Module):
     """Named-Speaker Identification Network
 
-    Identifies named-speakers in dialogues using Transformer Encoder's Self-attention
+    Identifies named-speakers in dialogues using Self-attention:
+    Embeds input text using BERT (TODO make it more generic)
+    then identifies speakers using either:
+    - a simple linear decoder
+    - a multimodal Transformer decoder (taking embedded audio and text as input)
 
     Note that it's important that the target name is as written in the input text.
-    Embeds input text using BERT (TODO make it more generic)
-    then identifies speakers using a Transformer Encoder
-
-    Decisions can be weighed using audio embeddings
-    (similar voices should be tagged similarly)
 
     Parameters
     ----------
@@ -61,10 +60,10 @@ class SidNet(Module):
     audio_dim: `int`, optional
         Dimension of the audio embeddings.
         Defaults to 512.
+
     References
     ----------
-    Press, O., Wolf, L., 2016.
-    Using the output embedding to improve language models. arXivpreprint arXiv:1608.05859.
+    TODO
     """
 
     def __init__(self, bert='bert-base-cased', out_size=256, num_layers=6, nhead=8,
@@ -90,7 +89,7 @@ class SidNet(Module):
                                                     dim_feedforward,
                                                     dropout, activation)
             decoder_norm = LayerNorm(self.hidden_size)
-            # init decoder with encoder_layer
+            # init decoder with decoder_layer
             self.decoder = TransformerDecoder(decoder_layer, self.decoder_num_layers,
                                               decoder_norm)
 
