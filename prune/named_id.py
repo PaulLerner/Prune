@@ -64,6 +64,7 @@ import warnings
 from typing import List
 from tabulate import tabulate
 from itertools import zip_longest
+from collections import Counter
 
 from pyannote.core import Segment
 from pyannote.core.utils.distance import pdist
@@ -109,10 +110,12 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
     return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
 
-def batch_word_accuracy(targets: List[str], predictions: List[str], pad='[PAD]'):
+def batch_word_accuracy(targets: List[str], predictions: List[str],
+                        pad='[PAD]', split=True):
     correct, total = 0, 0
     for target, prediction in zip(targets, predictions):
-        target, prediction = target.split(), prediction.split()
+        if split:
+            target, prediction = target.split(), prediction.split()
         for t, p in zip_longest(target, prediction, fillvalue=pad):
             if t == pad:
                 continue
@@ -217,53 +220,6 @@ def eval(batches, model, tokenizer, log_dir,
                 # manage devices
                 target_ids = target_ids.to(output.device)
 
-                # TODO handle file-level stuff
-                if False and uri != previous_uri:
-                    # compute file-level accuracy
-                    if previous_uri is not None:
-                        uris.append(previous_uri)
-                        # TODO use torch.mode on prediction_ids rather than argmax on scores
-                        file_pred_ids = argmax(file_output, dim=1)
-
-                        # compute token accuracy
-                        file_token_acc.append(token_accuracy(file_target_ids,
-                                                             file_pred_ids,
-                                                             tokenizer.pad_token_id))
-
-                        # decode and compute word accuracy
-                        file_target = tokenizer.batch_decode(file_target_ids.unsqueeze(0),
-                                                             clean_up_tokenization_spaces=False)
-                        file_pred = tokenizer.batch_decode(file_pred_ids.unsqueeze(0),
-                                                           clean_up_tokenization_spaces=False)
-                        file_word_acc.append(batch_word_accuracy(file_target, file_pred,
-                                                                 pad=tokenizer.pad_token))
-                        # TODO audio ER
-
-                    # reset file-level variables
-                    file_length = windows[-1][-1] - windows[0][0]
-                    i, shift = 0, 0
-                    file_output = zeros((file_length, model.vocab_size),
-                                        dtype=output.dtype,
-                                        device=output.device)
-                    file_target_ids = zeros((file_length,),
-                                            dtype=target_ids.dtype,
-                                            device=target_ids.device)
-
-                # TODO save target and output for future file-level accuracy
-                for t, o in zip(target_ids, output):
-                    break
-                    for start, end in windows[i: i+window_size]:
-                        # trim to max_length
-                        shifted_start, shifted_end = min(start-shift, max_length), min(end-shift, max_length)
-                        # HACK: this doesn't hold only at the end of TheBigBangTheory.Season03.Episode05 for some reason
-                        if len(file_target_ids[shifted_start+shift: shifted_end+shift]) == len(t[shifted_start: shifted_end]):
-                            file_target_ids[shifted_start+shift: shifted_end+shift] = t[shifted_start: shifted_end]
-                            file_output[shifted_start+shift: shifted_end+shift] += o[shifted_start: shifted_end]
-                        else:
-                            continue
-                    i += step_size
-                    # shift between batch and original file
-                    shift = windows[i][0]#start
                 # get model prediction per token: (batch_size, sequence_length)
                 relative_out = argmax(output, dim=2)
                 # retrieve token ids from input (batch_size, sequence_length) and manage device
@@ -280,6 +236,37 @@ def eval(batches, model, tokenizer, log_dir,
                 loss = reduce_loss(loss, tgt_key_padding_mask)
                 epoch_loss += loss.item()
                 previous_uri = uri
+
+                # handle file-level stuff
+                if uri != previous_uri:
+                    # compute file-level accuracy
+                    if previous_uri is not None:
+                        uris.append(previous_uri)
+                        # merge window-level predictions
+                        file_predictions = [p.most_common(1)[0][0] for p in file_predictions]
+                        # compute word accuracy
+                        file_word_acc.append(batch_word_accuracy([file_target],
+                                                                 [file_predictions],
+                                                                 pad=tokenizer.pad_token,
+                                                                 split=False))
+                        # TODO audio ER
+
+                    # reset file-level variables
+                    file_length = windows[-1][-1] - windows[0][0]
+                    i, shift = 0, 0
+                    file_target = [tokenizer.pad_token_id] * file_length
+                    file_predictions = [Counter() for _ in range(file_length)]
+
+                # save target and output for future file-level accuracy
+                for target_i, pred_i in zip(tgt, predictions):
+                    target_i, pred_i = target_i.split(), pred_i.split()
+                    for start, end in windows[i: i+window_size]:
+                        file_target[start:end] = target_i[start-shift: end-shift]
+                        for counter, p in zip(file_predictions[start:end], pred_i[start-shift: end-shift]):
+                            counter[p] += 1
+                    i += step_size
+                    # shift between batch and original file
+                    shift = start
 
                 if interactive:
                     eg = np.random.randint(len(tgt))
@@ -298,33 +285,27 @@ def eval(batches, model, tokenizer, log_dir,
                     print(tabulate(metrics, headers='keys'))
                     breakpoint()
 
-            # TODO compute file-level accuracy for the last file
-            # uris.append(previous_uri)
-            # file_pred_ids = argmax(file_output, dim=1)
-            # file_token_acc.append(token_accuracy(file_target_ids,
-            #                                      file_pred_ids,
-            #                                      tokenizer.pad_token_id))
-            # file_target = tokenizer.batch_decode(file_target_ids.unsqueeze(0),
-            #                                      clean_up_tokenization_spaces=False)
-            # file_pred = tokenizer.batch_decode(file_pred_ids.unsqueeze(0),
-            #                                    clean_up_tokenization_spaces=False)
-            # file_word_acc.append(batch_word_accuracy(file_target, file_pred,
-            #                                          pad=tokenizer.pad_token))
-            #
-            # # average file-accuracies
-            # uris.append('TOTAL')
-            # file_token_acc.append(np.mean(file_token_acc))
-            # file_word_acc.append(np.mean(file_word_acc))
-            # # print file-accuracies
-            # if test:
-            #     results = tabulate(zip(uris, file_token_acc, file_word_acc),
-            #                        headers=['uri', 'token-level', 'word-level'],
-            #                        tablefmt='latex')
-            #     print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
+            # compute file-level accuracy for the last file
+            uris.append(previous_uri)
+            # merge window-level predictions
+            file_predictions = [p.most_common(1)[0][0] for p in file_predictions]
+            # compute word accuracy
+            file_word_acc.append(batch_word_accuracy([file_target],
+                                                     [file_predictions],
+                                                     pad=tokenizer.pad_token,
+                                                     split=False))
+            # average file-accuracies
+            uris.append('TOTAL')
+            file_word_acc.append(np.mean(file_word_acc))
+            # print file-accuracies
+            if test:
+                results = tabulate(zip(uris, file_word_acc),
+                                   headers=['uri', 'word-level'],
+                                   tablefmt='latex')
+                print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
 
             # log tensorboard
-            # tb.add_scalar('Accuracy/eval/file/token', file_token_acc[-1], epoch)
-            # tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
+            tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
             epoch_loss /= len(batches)
             tb.add_scalar('Loss/eval', epoch_loss, epoch)
             epoch_word_acc /= len(batches)
@@ -537,8 +518,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         - uri: str,
           file-identifier of the batch and is set to None if shuffle, as batch
           are then file-heterogeneous
-        - batch_windows: List[Tuple[int]]
-          indices of the start and end tokens index of the speaker turns in the batch
+        - windows: List[Tuple[int]]
+          indices of the start and end words index of the speaker turns in the batch
           Empty if shuffling or augmenting data
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
@@ -566,7 +547,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         if not shuffle:
             oracle_correct, oracle_total = 0, 0
             n_tokens = []
-            batch_windows, text_windows, audio_windows, target_windows, audio_masks = [], [], [], [], []
+            text_windows, audio_windows, target_windows, audio_masks = [], [], [], []
         transcription = current_file['transcription']
         uri = current_file['uri']
 
@@ -617,13 +598,6 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             previous_speaker = word._.speaker
         windows.append((start, end))
         windows.pop(0)
-
-        # compute token windows in the batch
-        # except if augmenting data or in easy mode (FIXME)
-        if not shuffle and augment == 0 and not easy:
-            for start, end in windows:
-                end = len(tokenizer.tokenize(" ".join(targets[start:end])))
-                batch_windows.append((start, start+end))
 
         # slide through the transcription speaker turns w.r.t. window_size, step_size
         # filter out windows w.r.t. easy
@@ -695,7 +669,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 if (batch[-1] == tokenizer.pad_token_id).all():
                     continue
 
-                yield (uri, batch_windows) + batch
+                yield (uri, windows) + batch
         # yield (uri, oracle_accuracy)
         elif oracle:
             yield uri, oracle_correct/oracle_total, n_tokens
