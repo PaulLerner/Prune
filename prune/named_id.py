@@ -111,12 +111,15 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
 
 
 def batch_word_accuracy(targets: List[str], predictions: List[str],
-                        pad='[PAD]', split=True):
-    correct, total = np.zeros(max_length), np.zeros(max_length)
+                        pad='[PAD]', split=True, max_len=None):
+    max_len = max_length if max_len is None else max_len
+    correct, total = np.zeros(max_len), np.zeros(max_len)
     for target, prediction in zip(targets, predictions):
         if split:
             target, prediction = target.split(), prediction.split()
-        for i, t, p in enumerate(zip_longest(target, prediction, fillvalue=pad)):
+        for i, (t, p) in enumerate(zip_longest(target, prediction, fillvalue=pad)):
+            if i >= max_len:
+               break
             if t == pad:
                 continue
             if t == p:
@@ -241,7 +244,7 @@ def eval(batches, model, tokenizer, log_dir,
                 batch_word_acc, correct, total = batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
                 epoch_word_acc += batch_word_acc
                 corrects += correct
-                totals += totals
+                totals += total
 
                 # calculate loss
                 loss = criterion(output, target_ids)
@@ -259,7 +262,8 @@ def eval(batches, model, tokenizer, log_dir,
                         file_word_acc.append(batch_word_accuracy([file_target],
                                                                  [file_predictions],
                                                                  pad=tokenizer.pad_token,
-                                                                 split=False)[0])
+                                                                 split=False,
+                                                                 max_len=len(file_target))[0])
                         # TODO audio ER
 
                     # reset file-level variables
@@ -306,7 +310,8 @@ def eval(batches, model, tokenizer, log_dir,
             file_word_acc.append(batch_word_accuracy([file_target],
                                                      [file_predictions],
                                                      pad=tokenizer.pad_token,
-                                                     split=False)[0])
+                                                     split=False,
+                                                     max_len=len(file_target))[0])
             # average file-accuracies
             uris.append('TOTAL')
             file_word_acc.append(np.mean(file_word_acc))
@@ -328,7 +333,8 @@ def eval(batches, model, tokenizer, log_dir,
                 # plot accuracy w.r.t. word position
                 corrects, totals = corrects[totals != 0], totals[totals != 0]
                 plt.figure(figsize=(16, 10))
-                plt.plot(corrects/totals, '.', alpha=.5)
+                plt.scatter(np.arange(corrects.shape[0]), corrects/totals,
+                            linewidths=totals/totals.mean(), alpha=.5)
                 plt.xlabel('Word position')
                 plt.ylabel('Accuracy (word/batch-level)')
                 plt.savefig(log_dir/"accuracy_w.r.t_word_position.png")
