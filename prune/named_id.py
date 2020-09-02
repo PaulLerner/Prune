@@ -112,17 +112,18 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
 
 def batch_word_accuracy(targets: List[str], predictions: List[str],
                         pad='[PAD]', split=True):
-    correct, total = 0, 0
+    correct, total = np.zeros(max_length), np.zeros(max_length)
     for target, prediction in zip(targets, predictions):
         if split:
             target, prediction = target.split(), prediction.split()
-        for t, p in zip_longest(target, prediction, fillvalue=pad):
+        for i, t, p in enumerate(zip_longest(target, prediction, fillvalue=pad)):
             if t == pad:
                 continue
             if t == p:
-                correct += 1
-            total += 1
-    return correct/total
+                correct[i] += 1
+            total[i] += 1
+
+    return correct.sum()/total.sum(), correct, total
 
 
 def str_example(inp_eg, tgt_eg, pred_eg, step=20):
@@ -220,6 +221,7 @@ def eval(batches, model, tokenizer, log_dir,
         with no_grad():
             epoch_loss, epoch_word_acc = 0., 0.
             uris, file_token_acc, file_word_acc = [], [], []
+            corrects, totals = np.zeros(max_length), np.zeros(max_length)
             previous_uri = None
             for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass: (batch_size, sequence_length, sequence_length)
@@ -236,7 +238,10 @@ def eval(batches, model, tokenizer, log_dir,
 
                 # decode and compute word accuracy
                 predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
-                epoch_word_acc += batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
+                batch_word_acc, correct, total = batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
+                epoch_word_acc += batch_word_acc
+                corrects += correct
+                totals += totals
 
                 # calculate loss
                 loss = criterion(output, target_ids)
@@ -254,7 +259,7 @@ def eval(batches, model, tokenizer, log_dir,
                         file_word_acc.append(batch_word_accuracy([file_target],
                                                                  [file_predictions],
                                                                  pad=tokenizer.pad_token,
-                                                                 split=False))
+                                                                 split=False)[0])
                         # TODO audio ER
 
                     # reset file-level variables
@@ -301,7 +306,7 @@ def eval(batches, model, tokenizer, log_dir,
             file_word_acc.append(batch_word_accuracy([file_target],
                                                      [file_predictions],
                                                      pad=tokenizer.pad_token,
-                                                     split=False))
+                                                     split=False)[0])
             # average file-accuracies
             uris.append('TOTAL')
             file_word_acc.append(np.mean(file_word_acc))
@@ -320,6 +325,14 @@ def eval(batches, model, tokenizer, log_dir,
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc, epoch)
             # print and write metrics
             if test:
+                # plot accuracy w.r.t. word position
+                corrects, totals = corrects[totals != 0], totals[totals != 0]
+                plt.figure(figsize=(16, 10))
+                plt.plot(corrects/totals, '.', alpha=.5)
+                plt.xlabel('Word position')
+                plt.ylabel('Accuracy (word/batch-level)')
+                plt.savefig(log_dir/"accuracy_w.r.t_word_position.png")
+
                 metrics = {
                     'Loss/eval': [epoch_loss],
                     'Accuracy/eval/batch/word': [epoch_word_acc]
