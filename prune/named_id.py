@@ -156,6 +156,13 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
         plt.savefig(save/"output.png")
 
 
+def mode(prediction, pad='[PAD]'):
+    """Returns most common predicted item or pad if no items were predicted"""
+    if prediction:
+        return prediction.most_common(1)[0][0]
+    return pad
+
+
 def eval(batches, model, tokenizer, log_dir,
          test=False, evergreen=False, interactive=False, step_size=1, window_size=10):
     """Load model from checkpoint and evaluate it on batches.
@@ -235,7 +242,6 @@ def eval(batches, model, tokenizer, log_dir,
                 loss = criterion(output, target_ids)
                 loss = reduce_loss(loss, tgt_key_padding_mask)
                 epoch_loss += loss.item()
-                previous_uri = uri
 
                 # handle file-level stuff
                 if uri != previous_uri:
@@ -243,7 +249,7 @@ def eval(batches, model, tokenizer, log_dir,
                     if previous_uri is not None:
                         uris.append(previous_uri)
                         # merge window-level predictions
-                        file_predictions = [p.most_common(1)[0][0] for p in file_predictions]
+                        file_predictions = [mode(p) for p in file_predictions]
                         # compute word accuracy
                         file_word_acc.append(batch_word_accuracy([file_target],
                                                                  [file_predictions],
@@ -285,10 +291,12 @@ def eval(batches, model, tokenizer, log_dir,
                     print(tabulate(metrics, headers='keys'))
                     breakpoint()
 
+                previous_uri = uri
+
             # compute file-level accuracy for the last file
             uris.append(previous_uri)
             # merge window-level predictions
-            file_predictions = [p.most_common(1)[0][0] for p in file_predictions]
+            file_predictions = [mode(p) for p in file_predictions]
             # compute word accuracy
             file_word_acc.append(batch_word_accuracy([file_target],
                                                      [file_predictions],
