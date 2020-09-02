@@ -249,7 +249,7 @@ def eval(batches, model, tokenizer, log_dir,
                     if previous_uri is not None:
                         uris.append(previous_uri)
                         # merge window-level predictions
-                        file_predictions = [mode(p) for p in file_predictions]
+                        file_predictions = [mode(p, tokenizer.pad_token) for p in file_predictions]
                         # compute word accuracy
                         file_word_acc.append(batch_word_accuracy([file_target],
                                                                  [file_predictions],
@@ -260,7 +260,7 @@ def eval(batches, model, tokenizer, log_dir,
                     # reset file-level variables
                     file_length = windows[-1][-1] - windows[0][0]
                     i, shift = 0, 0
-                    file_target = [tokenizer.pad_token_id] * file_length
+                    file_target = [tokenizer.pad_token] * file_length
                     file_predictions = [Counter() for _ in range(file_length)]
 
                 # save target and output for future file-level accuracy
@@ -272,7 +272,7 @@ def eval(batches, model, tokenizer, log_dir,
                             counter[p] += 1
                     i += step_size
                     # shift between batch and original file
-                    shift = start
+                    shift = windows[i][0] #start
 
                 if interactive:
                     eg = np.random.randint(len(tgt))
@@ -296,7 +296,7 @@ def eval(batches, model, tokenizer, log_dir,
             # compute file-level accuracy for the last file
             uris.append(previous_uri)
             # merge window-level predictions
-            file_predictions = [mode(p) for p in file_predictions]
+            file_predictions = [mode(p, tokenizer.pad_token) for p in file_predictions]
             # compute word accuracy
             file_word_acc.append(batch_word_accuracy([file_target],
                                                      [file_predictions],
