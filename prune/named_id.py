@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>]
+named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>] [(--augment=<ratio> [--uniform])]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
 named_id.py test <protocol> <validate_dir> [options] [--interactive]
 named_id.py oracle <protocol> [options]
@@ -28,7 +28,6 @@ Training options:
                      Defaults to no augmentation.
 --uniform            When augmenting data, pick fake names with uniform distribution
                      regardless of their frequency in the name database.
-                     Has no effect if augment==0
 
 Validation options:
 --evergreen          Start with the latest checkpoints
@@ -952,7 +951,6 @@ if __name__ == '__main__':
     sep_change = args['--sep_change']
     augment = int(args['--augment']) if args['--augment'] else 0
     uniform = args['--uniform']
-
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
     mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
