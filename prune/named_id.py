@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>]
+named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>] [(--augment=<ratio> [--uniform])]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
 named_id.py test <protocol> <validate_dir> [options] [--interactive]
 named_id.py oracle <protocol> [options]
@@ -26,6 +26,8 @@ Training options:
                      If less than 0, will discard real example.
                      See batchify for details.
                      Defaults to no augmentation.
+--uniform            When augmenting data, pick fake names with uniform distribution
+                     regardless of their frequency in the name database.
 
 Validation options:
 --evergreen          Start with the latest checkpoints
@@ -457,7 +459,7 @@ def any_in_text(items, text):
 
 def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
              batch_size=128, window_size=10, step_size=1, mask=True, easy=False,
-             sep_change=False, augment=0, shuffle=True, oracle=False):
+             sep_change=False, augment=0, uniform=False, shuffle=True, oracle=False):
     """
     Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
@@ -504,6 +506,10 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         Note that it doesn't have any effect if no speaker names (as provided in mapping)
         are present in the input text. If less than 0, will discard real example.
         Defaults to no augmentation.
+    uniform: bool, optional
+        When augmenting data, pick fake names with uniform distribution
+        regardless of their frequency in the name database.
+        Has no effect if augment==0
     shuffle: bool, optional
         Whether to shuffle windows before batching.
         Should be set to False when testing to get file-homogeneous batches,
@@ -544,6 +550,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 names += [line.split(',')[3].split()[0]
                           for line in file.read().split("\n") if line != '']
         names = np.array(names)
+        if uniform:
+            names = np.unique(names)
 
     text_windows, audio_windows, target_windows, audio_masks = [], [], [], []
     if oracle and shuffle:
@@ -913,6 +921,7 @@ if __name__ == '__main__':
     easy = args['--easy']
     sep_change = args['--sep_change']
     augment = int(args['--augment']) if args['--augment'] else 0
+    uniform = args['--uniform']
     protocol = get_protocol(protocol_name)
     serie, _, _ = protocol_name.split('.')
     mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
@@ -940,6 +949,7 @@ if __name__ == '__main__':
                                 easy=easy,
                                 sep_change=sep_change,
                                 augment=augment,
+                                uniform=uniform,
                                 shuffle=True))
         model, optimizer = train(batches, model, tokenizer, train_dir,
                                  start_epoch=start_epoch,
@@ -965,6 +975,7 @@ if __name__ == '__main__':
                                 easy=easy,
                                 sep_change=sep_change,
                                 augment=augment,
+                                uniform=uniform,
                                 shuffle=False))
         eval(batches, model, tokenizer, validate_dir,
              test=False, evergreen=evergreen, interactive=interactive,
@@ -990,6 +1001,7 @@ if __name__ == '__main__':
                                 easy=easy,
                                 sep_change=sep_change,
                                 augment=augment,
+                                uniform=uniform,
                                 shuffle=False))
 
         eval(batches, model, tokenizer, test_dir,
