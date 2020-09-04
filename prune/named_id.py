@@ -13,9 +13,9 @@ Common options:
 --subset=<subset>    Protocol subset, one of 'train', 'development' or 'test'.
                      Defaults to 'train', 'development' and 'test' in
                      'train', 'validate', and 'test' mode, respectively.
---batch=<batch>      Batch size [default: 128]
---window=<window>    Window size [default: 8]
---step=<step>        Step size [default: 1]
+--batch=<batch>      Batch size (# of windows) [default: 128]
+--window=<window>    Window size (# of speaker turns) [default: 8]
+--step=<step>        Step size (overlap between windows) [default: 1]
 --max_len=<max_len>  Maximum # of tokens input to BERT. Maximum 512 [default: 256]
 --easy               Only keep text windows with named speakers in it.
 --sep_change         Add a special "[SEP]" token between every speech turn.
@@ -33,6 +33,10 @@ Validation options:
 --evergreen          Start with the latest checkpoints
 --interactive        Open-up python debugger after each forward pass
 
+To use meta-protocols, name it like: "X.SpeakerDiarization.<serie1>+<serie2>"
+(with '+' separated serie names so that we're able to load the appropriate mapping)
+e.g. "X.SpeakerDiarization.BuffyTheVampireSlayer+Friends"
+
 File structure should look like:
 
 <experiment_dir>
@@ -44,6 +48,7 @@ File structure should look like:
 │   │   └───params.yml
 │   │   │   <test_dir>
 │   │   │   └───params.yml
+│   │   │   │   eval
 
 config.yml is optional to set additional parameters (e.g. change the default model architecture)
 It should look like:
@@ -539,8 +544,6 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
           Empty if shuffling or augmenting data
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
-    with open(mapping) as file:
-        mapping = json.load(file)
 
     if audio_emb is not None:
         audio_emb = Wrapper(audio_emb)
@@ -926,8 +929,20 @@ if __name__ == '__main__':
     augment = int(args['--augment']) if args['--augment'] else 0
     uniform = args['--uniform']
     protocol = get_protocol(protocol_name)
-    serie, _, _ = protocol_name.split('.')
-    mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
+
+    # handle meta-protocols
+    serie, _, x = protocol_name.split('.')
+    if serie == 'X':
+        series = x.split('+')
+    else:
+        series = [serie]
+
+    # load mapping(s)
+    mapping = {}
+    for serie in series:
+        mapping_path = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
+        with open(mapping_path) as file:
+            mapping.update(json.load(file))
 
     # instantiate tokenizer
     tokenizer = BertTokenizer.from_pretrained(BERT)
@@ -1020,8 +1035,6 @@ if __name__ == '__main__':
         architecture = config.get('architecture', {})
         model = DataParallel(SidNet(BERT, max_length, **architecture))
         # get list of names
-        with open(mapping) as file:
-            mapping = json.load(file)
         words = set(mapping.values())
         visualize(words, model, tokenizer, validate_dir)
     elif args['oracle']:
