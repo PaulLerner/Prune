@@ -200,18 +200,24 @@ def eval(batches, model, tokenizer, log_dir,
         Number of speaker turns in one window
         Defaults to 10.
     """
+    params_file = log_dir.parent / 'params.yml'
     if test:
         weights_path = log_dir.parents[1] / 'weights'
-        with open(log_dir.parent / 'params.yml') as file:
+        with open(params_file) as file:
             epoch = yaml.load(file, Loader=yaml.SafeLoader)["epoch"]
         weights = [weights_path/EPOCH_FORMAT.format(epoch)]
+        best = 0.
     else:
         weights_path = log_dir.parents[0] / 'weights'
         weights = sorted(weights_path.iterdir(), reverse=evergreen)
+        if params_file.exists():
+            with open(params_file) as file:
+                best = yaml.load(file, Loader=yaml.SafeLoader)["accuracy"]
+        else:
+            best = 0.
 
     criterion = BCELoss(reduction='none')
     tb = SummaryWriter(log_dir)
-    best = 0.
     for weight in tqdm(weights, desc='Evaluating'):
         checkpoint = load(weight, map_location=model.src_device_obj)
         epoch = checkpoint["epoch"]
