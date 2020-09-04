@@ -274,7 +274,7 @@ def eval(batches, model, tokenizer, log_dir,
                             counter[p] += 1
                     i += step_size
                     # shift between batch and original file
-                    shift = windows[i][0] #start
+                    shift = windows[i][0]  # start
 
                 if interactive:
                     eg = np.random.randint(len(tgt))
@@ -307,12 +307,6 @@ def eval(batches, model, tokenizer, log_dir,
             # average file-accuracies
             uris.append('TOTAL')
             file_word_acc.append(np.mean(file_word_acc))
-            # print file-accuracies
-            if test:
-                results = tabulate(zip(uris, file_word_acc),
-                                   headers=['uri', 'word-level'],
-                                   tablefmt='latex')
-                print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
 
             # log tensorboard
             tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
@@ -327,6 +321,9 @@ def eval(batches, model, tokenizer, log_dir,
                     'Accuracy/eval/batch/word': [epoch_word_acc]
                 }
                 metrics = tabulate(metrics, headers='keys', tablefmt='latex')
+                metrics += tabulate(zip(uris, file_word_acc),
+                                   headers=['uri', 'word-level'],
+                                   tablefmt='latex')
                 print(metrics)
                 with open(log_dir / 'eval', 'w') as file:
                     file.write(metrics)
