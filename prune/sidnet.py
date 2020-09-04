@@ -68,10 +68,10 @@ class SidNet(Module):
     activation: `str`, optional
         The activation function of intermediate layer of the FFN: 'relu' or 'gelu'
          Defaults to 'relu'
+
     References
     ----------
-    Press, O., Wolf, L., 2016.
-    Using the output embedding to improve language models. arXivpreprint arXiv:1608.05859.
+    TODO
     """
 
     def __init__(self, bert='bert-base-cased', out_size=256, num_layers=6, nhead=8,

@@ -13,9 +13,9 @@ Common options:
 --subset=<subset>    Protocol subset, one of 'train', 'development' or 'test'.
                      Defaults to 'train', 'development' and 'test' in
                      'train', 'validate', and 'test' mode, respectively.
---batch=<batch>      Batch size [default: 128]
---window=<window>    Window size [default: 8]
---step=<step>        Step size [default: 1]
+--batch=<batch>      Batch size (# of windows) [default: 128]
+--window=<window>    Window size (# of speaker turns) [default: 8]
+--step=<step>        Step size (overlap between windows) [default: 1]
 --max_len=<max_len>  Maximum # of tokens input to BERT. Maximum 512 [default: 256]
 --easy               Only keep text windows with named speakers in it.
 --sep_change         Add a special "[SEP]" token between every speech turn.
@@ -48,6 +48,7 @@ File structure should look like:
 │   │   └───params.yml
 │   │   │   <test_dir>
 │   │   │   └───params.yml
+│   │   │   │   eval
 
 config.yml is optional to set additional parameters (e.g. change the default model architecture)
 It should look like:
