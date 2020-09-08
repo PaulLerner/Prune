@@ -352,8 +352,8 @@ def reduce_loss(loss, tgt_key_padding_mask):
 
 
 def train(batches, model, tokenizer, train_dir=Path.cwd(),
-          lr=1e-3, max_grad_norm=None,
-          epochs=100, freeze=['bert'], save_every=1, start_epoch=None):
+          lr=1e-3, max_grad_norm=None, epochs=100, freeze=['bert'],
+          save_every=1, start_epoch=None, augment=0, penalization_weight=0.5):
     """Train the model for `epochs` epochs
 
     Parameters
@@ -386,6 +386,20 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     start_epoch: int, optional
         Starts training back at start_epoch.
         Defaults to raise an error if training in an existing directory
+    augment: int, optional
+        Data augmentation ratio (see batchify).
+        Batches should be formatted so that they are split in `augment+1` parts
+        where original sample is the first part
+        e.g. with augment=1, the first half of the batch is original and second half is synthetic
+        Defaults to no augmentation.
+    penalization_weight: float, optional
+        Weight of the augmentation penalization in the loss:
+
+        loss = (1-penalization_weight) * criterion(output_original, target)
+                + penalization_weight * criterion(output_original, output_synthetic)
+
+        Defaults to 0.5: average between target_loss and penalization_loss
+        Has no effect if augment==0
     """
     optimizer = Adam(model.module.parameters(), lr=lr)
 
@@ -414,24 +428,57 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     model.train()
     criterion = BCELoss(reduction='none')
 
+    if augment < 0:
+        augment = abs(augment) - 1
+
     tb = SummaryWriter(train_dir)
     for epoch in tqdm(range(start_epoch, epochs+start_epoch), desc='Training'):
         # shuffle batches
         np.random.shuffle(batches)
 
-        epoch_loss = 0.
+        epoch_loss, epoch_target_loss, epoch_penalization_loss = 0., 0., 0.
         for _, _, _, _, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
             optimizer.zero_grad()
 
-            # forward pass
-            output = model(input_ids, audio_batch, src_key_padding_mask, audio_mask)
-            # manage devices
-            target_ids = target_ids.to(output.device)
+            augmented_batch_size = input_ids.shape[0]
+            assert augmented_batch_size % (augment+1) == 0, \
+                (f"Augmented batch size ({augmented_batch_size}) "
+                 f"is not divisible by 'augment+1' ({augment+1})")
+            batch_size = augmented_batch_size // (augment+1)
 
-            # calculate loss
-            loss = criterion(output, target_ids)
-            # mask and reduce loss
-            loss = reduce_loss(loss, tgt_key_padding_mask)
+            target_losses = zeros(augment+1)
+            for a in range(augment+1):
+                s = slice(batch_size*a, batch_size * (a+1))
+                # forward pass
+                output = model(input_ids[s],
+                               audio_batch[s],
+                               src_key_padding_mask[s],
+                               audio_mask[s])
+                # manage devices
+                target_ids = target_ids.to(output.device)
+                target_losses = target_losses.to(output.device)
+
+                # calculate target-loss
+                target_loss = criterion(output, target_ids[s])
+                # mask and reduce loss
+                target_loss = reduce_loss(target_loss, tgt_key_padding_mask[s])
+                target_losses[a] = target_loss
+                # original sample -> save original output
+                if a == 0:
+                    # FIXME: do we need to copy output ?
+                    output_original = output
+                # first synthetic sample -> compute penalization_loss
+                elif a == 1:
+                    penalization_loss = criterion(output_original,
+                                                  output.detach())
+                    penalization_loss = reduce_loss(penalization_loss,
+                                                    tgt_key_padding_mask[s])
+            target_losses = target_losses.mean()
+            if augment == 0:
+                loss = target_losses
+            else:
+                loss = (1 - penalization_weight) * target_losses \
+                       + penalization_weight * penalization_loss
             loss.backward()
 
             if max_grad_norm is not None:
@@ -439,8 +486,12 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
 
             optimizer.step()
             epoch_loss += loss.item()
+            epoch_target_loss += target_losses.item()
+            epoch_penalization_loss += penalization_loss.item()
 
         tb.add_scalar('Loss/train', epoch_loss/len(batches), epoch)
+        tb.add_scalar('Loss/target/train', epoch_target_loss / len(batches), epoch)
+        tb.add_scalar('Loss/penalization/train', epoch_penalization_loss / len(batches), epoch)
         tb.add_scalar('lr', lr, epoch)
 
         if (epoch+1) % save_every == 0:
@@ -541,7 +592,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
           are then file-heterogeneous
         - windows: List[Tuple[int]]
           indices of the start and end words index of the speaker turns in the batch
-          Empty if shuffling or augmenting data
+          Not available when augmenting data
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
 
@@ -682,10 +733,12 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 target_windows.append(synthetic_targets)
         # yield file-homogeneous batches along with file-uri
         if not shuffle and not oracle:
-            indices = np.arange(len(text_windows))
+            if augment < 0:
+                augment = abs(augment)-1
+            indices = np.arange(len(text_windows)//(augment+1))
             for batch in batchify_windows(tokenizer, text_windows, target_windows,
                                           audio_windows, indices, batch_size=batch_size,
-                                          mask=mask, audio_masks=audio_masks):
+                                          mask=mask, audio_masks=audio_masks, augment=augment):
                 # skip fully-padded batches, this might happen with unknown speakers
                 if (batch[-1] == tokenizer.pad_token_id).all():
                     continue
@@ -695,12 +748,14 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         elif oracle:
             yield uri, oracle_correct/oracle_total, n_tokens
     if shuffle:
+        if augment < 0:
+            augment = abs(augment)-1
         # shuffle all windows
-        indices = np.arange(len(text_windows))
+        indices = np.arange(len(text_windows)//(augment+1))
         np.random.shuffle(indices)
         for batch in tqdm(batchify_windows(tokenizer, text_windows, target_windows,
                                            audio_windows, indices, batch_size=batch_size,
-                                           mask=mask, audio_masks=audio_masks),
+                                           mask=mask, audio_masks=audio_masks, augment=augment),
                           desc='Encoding batches'):
             # skip fully-padded batches, this might happen with unknown speakers
             if (batch[-1] == tokenizer.pad_token_id).all():
@@ -730,7 +785,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
 
 
 def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, indices,
-                     batch_size=128, mask=True, audio_masks=None):
+                     batch_size=128, mask=True, audio_masks=None, augment=0):
     """
     Parameters
     ----------
@@ -744,13 +799,25 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
     # keep remainder (i.e. last batch of size <= batch_size)
     for i in range(0, len(indices), batch_size):
         text_batch, target_batch, audio_batch, audio_mask = [], [], [], []
-        for j in indices[i: i + batch_size]:
+        # format batch so it's split in `augment+1` parts where original sample is the first part
+        # e.g. with augment=1, the first half of the batch is original and second half is synthetic
+        # 1. append original sample
+        for j in (indices[i: i + batch_size]*(augment+1)):
             text_batch.append(text_windows[j])
             target_batch.append(target_windows[j])
             audio_window = audio_windows[j]
             if audio_window is not None:
                 audio_batch.append(audio_window.unsqueeze(0))
                 audio_mask.append(audio_masks[j].unsqueeze(0))
+        # 2. append synthetic sample(s) (if any)
+        for a in range(augment):
+            for j in (indices[i: i + batch_size]*(augment+1) + a):
+                text_batch.append(text_windows[j])
+                target_batch.append(target_windows[j])
+                audio_window = audio_windows[j]
+                if audio_window is not None:
+                    audio_batch.append(audio_window.unsqueeze(0))
+                    audio_mask.append(audio_masks[j].unsqueeze(0))
         if len(audio_batch) != 0:
             audio_batch = cat(audio_batch, dim=0)
             audio_mask = cat(audio_mask, dim=0)
@@ -970,7 +1037,7 @@ if __name__ == '__main__':
                                 uniform=uniform,
                                 shuffle=True))
         model, optimizer = train(batches, model, tokenizer, train_dir,
-                                 start_epoch=start_epoch,
+                                 start_epoch=start_epoch, augment=augment,
                                  **config.get('training', {}))
     elif args['validate']:
         subset = args['--subset'] if args['--subset'] else 'development'
