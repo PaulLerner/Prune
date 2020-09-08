@@ -451,9 +451,9 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
                 s = slice(batch_size*a, batch_size * (a+1))
                 # forward pass
                 output = model(input_ids[s],
-                               audio_batch[s],
+                               audio_batch[s] if audio_batch is not None else None,
                                src_key_padding_mask[s],
-                               audio_mask[s])
+                               audio_mask[s] if audio_mask is not None else None)
                 # manage devices
                 target_ids = target_ids.to(output.device)
                 target_losses = target_losses.to(output.device)
@@ -811,7 +811,7 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
                 audio_mask.append(audio_masks[j].unsqueeze(0))
         # 2. append synthetic sample(s) (if any)
         for a in range(augment):
-            for j in (indices[i: i + batch_size]*(augment+1) + a):
+            for j in (indices[i: i + batch_size]*(augment+1) + a+1):
                 text_batch.append(text_windows[j])
                 target_batch.append(target_windows[j])
                 audio_window = audio_windows[j]
