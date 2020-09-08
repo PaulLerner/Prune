@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>] [(--augment=<ratio> [--uniform])]
+named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>] [(--augment=<ratio> [--uniform])] [--mask_names]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
 named_id.py test <protocol> <validate_dir> [options] [--interactive]
 named_id.py oracle <protocol> [options]
@@ -28,6 +28,7 @@ Training options:
                      Defaults to no augmentation.
 --uniform            When augmenting data, pick fake names with uniform distribution
                      regardless of their frequency in the name database.
+--mask_names         Mask target names in input
 
 Validation options:
 --evergreen          Start with the latest checkpoints
@@ -467,7 +468,8 @@ def any_in_text(items, text):
 
 def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
              batch_size=128, window_size=10, step_size=1, mask=True, easy=False,
-             sep_change=False, augment=0, uniform=False, shuffle=True, oracle=False):
+             sep_change=False, augment=0, uniform=False, shuffle=True,
+             oracle=False, mask_names=False):
     """
     Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
@@ -529,6 +531,9 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         Oracles knows who the speaker is if it's name (case-insensitive)
         is mentioned in the input. Most of the other arguments are not relevant
         in this case, and yields (uri, accuracy, n_tokens) instead of what's documented below.
+        Defaults to False
+    mask_names: bool, optional
+        mask target names in input
         Defaults to False
 
     Yields
@@ -685,7 +690,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             indices = np.arange(len(text_windows))
             for batch in batchify_windows(tokenizer, text_windows, target_windows,
                                           audio_windows, indices, batch_size=batch_size,
-                                          mask=mask, audio_masks=audio_masks):
+                                          mask=mask, audio_masks=audio_masks, mask_names=mask_names):
                 # skip fully-padded batches, this might happen with unknown speakers
                 if (batch[-1] == tokenizer.pad_token_id).all():
                     continue
@@ -700,7 +705,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         np.random.shuffle(indices)
         for batch in tqdm(batchify_windows(tokenizer, text_windows, target_windows,
                                            audio_windows, indices, batch_size=batch_size,
-                                           mask=mask, audio_masks=audio_masks),
+                                           mask=mask, audio_masks=audio_masks, mask_names=mask_names),
                           desc='Encoding batches'):
             # skip fully-padded batches, this might happen with unknown speakers
             if (batch[-1] == tokenizer.pad_token_id).all():
@@ -730,7 +735,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
 
 
 def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, indices,
-                     batch_size=128, mask=True, audio_masks=None):
+                     batch_size=128, mask=True, audio_masks=None, mask_names=False):
     """
     Parameters
     ----------
@@ -757,7 +762,8 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
         else:
             audio_batch, audio_mask = None, None
         # encode batch (i.e. tokenize, tensorize...)
-        batch = batch_encode_multi(tokenizer, text_batch, target_batch, mask=mask)
+        batch = batch_encode_multi(tokenizer, text_batch, target_batch,
+                                   mask=mask, mask_names=mask_names)
 
         # append original text and target to be able to evaluate
         # (FIXME: this might add extra memory usage, unnecessary to train the model)
@@ -801,7 +807,7 @@ def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False,
     return input_ids, attention_mask
 
 
-def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
+def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True, mask_names=False):
     """Encode input, target text and audio consistently in torch Tensor
 
     Parameters
@@ -815,6 +821,9 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
     mask: bool, optional
         Compute attention_mask according to max_length.
         Defaults to True.
+    mask_names: bool, optional
+        Mask target names in input.
+        Defaults to False.
 
     Returns
     -------
@@ -841,6 +850,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
     tgt_key_padding_mask[target_ids==tokenizer.pad_token_id] = tokenizer.pad_token_id
 
     # convert targets to relative targets: (batch_size, max_length, max_length)
+    # and mask target names in input if mask_names
     relative_targets = zeros(target_ids.shape + (max_length,))
     for i, (input_id, target_id) in enumerate(zip(input_ids, target_ids)):
         for j, t in enumerate(target_id):
@@ -853,6 +863,9 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
                 continue
             where = where.nonzero().reshape(-1)
             relative_targets[i, j, where] = 1.
+            # mask target names in input
+            if mask_names:
+                src_key_padding_mask[i, where] = tokenizer.pad_token_id
 
     return input_ids, relative_targets, src_key_padding_mask, tgt_key_padding_mask
 
@@ -926,8 +939,6 @@ if __name__ == '__main__':
     mask = True
     easy = args['--easy']
     sep_change = args['--sep_change']
-    augment = int(args['--augment']) if args['--augment'] else 0
-    uniform = args['--uniform']
     protocol = get_protocol(protocol_name)
 
     # handle meta-protocols
@@ -951,13 +962,18 @@ if __name__ == '__main__':
 
     if args['train']:
         subset = args['--subset'] if args['--subset'] else 'train'
-        start_epoch = int(args['--from']) if args['--from'] else None
         train_dir = Path(args['<experiment_dir>'], f'{protocol_name}.{subset}')
-        train_dir.mkdir(exist_ok=True)
         config = load_config(train_dir.parents[0])
         architecture = config.get('architecture', {})
         audio = config.get('audio')
+        start_epoch = int(args['--from']) if args['--from'] else None
+        augment = int(args['--augment']) if args['--augment'] else 0
+        uniform = args['--uniform']
+        mask_names = args['--mask_names']
+
+        train_dir.mkdir(exist_ok=True)
         model = DataParallel(SidNet(BERT, max_length, **architecture))
+
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
                                 batch_size=batch_size,
@@ -968,7 +984,8 @@ if __name__ == '__main__':
                                 sep_change=sep_change,
                                 augment=augment,
                                 uniform=uniform,
-                                shuffle=True))
+                                shuffle=True,
+                                mask_names=mask_names))
         model, optimizer = train(batches, model, tokenizer, train_dir,
                                  start_epoch=start_epoch,
                                  **config.get('training', {}))
