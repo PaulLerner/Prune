@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>]
+named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>] [(--augment=<ratio> [--uniform])]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
 named_id.py test <protocol> <validate_dir> [options] [--interactive]
 named_id.py oracle <protocol> [options]
@@ -13,9 +13,9 @@ Common options:
 --subset=<subset>    Protocol subset, one of 'train', 'development' or 'test'.
                      Defaults to 'train', 'development' and 'test' in
                      'train', 'validate', and 'test' mode, respectively.
---batch=<batch>      Batch size [default: 128]
---window=<window>    Window size [default: 8]
---step=<step>        Step size [default: 1]
+--batch=<batch>      Batch size (# of windows) [default: 128]
+--window=<window>    Window size (# of speaker turns) [default: 8]
+--step=<step>        Step size (overlap between windows) [default: 1]
 --max_len=<max_len>  Maximum # of tokens input to BERT. Maximum 512 [default: 256]
 --easy               Only keep text windows with named speakers in it.
 --sep_change         Add a special "[SEP]" token between every speech turn.
@@ -26,10 +26,16 @@ Training options:
                      If less than 0, will discard real example.
                      See batchify for details.
                      Defaults to no augmentation.
+--uniform            When augmenting data, pick fake names with uniform distribution
+                     regardless of their frequency in the name database.
 
 Validation options:
 --evergreen          Start with the latest checkpoints
 --interactive        Open-up python debugger after each forward pass
+
+To use meta-protocols, name it like: "X.SpeakerDiarization.<serie1>+<serie2>"
+(with '+' separated serie names so that we're able to load the appropriate mapping)
+e.g. "X.SpeakerDiarization.BuffyTheVampireSlayer+Friends"
 
 File structure should look like:
 
@@ -42,6 +48,7 @@ File structure should look like:
 │   │   └───params.yml
 │   │   │   <test_dir>
 │   │   │   └───params.yml
+│   │   │   │   eval
 
 config.yml is optional to set additional parameters (e.g. change the default model architecture)
 It should look like:
@@ -79,7 +86,7 @@ from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
 
 from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, \
-    zeros_like, LongTensor
+    zeros_like, LongTensor, ones, float, cat
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
@@ -202,18 +209,24 @@ def eval(batches, model, tokenizer, log_dir,
         Number of speaker turns in one window
         Defaults to 10.
     """
+    params_file = log_dir.parent / 'params.yml'
     if test:
         weights_path = log_dir.parents[1] / 'weights'
-        with open(log_dir.parent / 'params.yml') as file:
+        with open(params_file) as file:
             epoch = yaml.load(file, Loader=yaml.SafeLoader)["epoch"]
         weights = [weights_path/EPOCH_FORMAT.format(epoch)]
+        best = 0.
     else:
         weights_path = log_dir.parents[0] / 'weights'
         weights = sorted(weights_path.iterdir(), reverse=evergreen)
+        if params_file.exists():
+            with open(params_file) as file:
+                best = yaml.load(file, Loader=yaml.SafeLoader)["accuracy"]
+        else:
+            best = 0.
 
     criterion = BCELoss(reduction='none')
     tb = SummaryWriter(log_dir)
-    best = 0.
     for weight in tqdm(weights, desc='Evaluating'):
         checkpoint = load(weight, map_location=model.src_device_obj)
         epoch = checkpoint["epoch"]
@@ -226,9 +239,9 @@ def eval(batches, model, tokenizer, log_dir,
             uris, file_token_acc, file_word_acc = [], [], []
             corrects, totals = np.zeros(max_length), np.zeros(max_length)
             previous_uri = None
-            for uri, windows, inp, tgt, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+            for uri, windows, inp, tgt, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass: (batch_size, sequence_length, sequence_length)
-                output = model(input_ids, audio_similarity, src_key_padding_mask)
+                output = model(input_ids, audio_batch, src_key_padding_mask, audio_mask)
                 # manage devices
                 target_ids = target_ids.to(output.device)
 
@@ -281,7 +294,7 @@ def eval(batches, model, tokenizer, log_dir,
                             counter[p] += 1
                     i += step_size
                     # shift between batch and original file
-                    shift = windows[i][0] #start
+                    shift = windows[i][0]  # start
 
                 if interactive:
                     eg = np.random.randint(len(tgt))
@@ -315,12 +328,6 @@ def eval(batches, model, tokenizer, log_dir,
             # average file-accuracies
             uris.append('TOTAL')
             file_word_acc.append(np.mean(file_word_acc))
-            # print file-accuracies
-            if test:
-                results = tabulate(zip(uris, file_word_acc),
-                                   headers=['uri', 'word-level'],
-                                   tablefmt='latex')
-                print(f'Epoch #{epoch} | Accuracies per file:\n{results}')
 
             # log tensorboard
             tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
@@ -344,6 +351,9 @@ def eval(batches, model, tokenizer, log_dir,
                     'Accuracy/eval/batch/word': [epoch_word_acc]
                 }
                 metrics = tabulate(metrics, headers='keys', tablefmt='latex')
+                metrics += tabulate(zip(uris, file_word_acc),
+                                   headers=['uri', 'word-level'],
+                                   tablefmt='latex')
                 print(metrics)
                 with open(log_dir / 'eval', 'w') as file:
                     file.write(metrics)
@@ -421,7 +431,6 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
 
     model.module.freeze(freeze)
     model.train()
-
     criterion = BCELoss(reduction='none')
 
     tb = SummaryWriter(train_dir)
@@ -430,11 +439,11 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         np.random.shuffle(batches)
 
         epoch_loss = 0.
-        for _, _, _, _, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask in batches:
+        for _, _, _, _, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
             optimizer.zero_grad()
 
             # forward pass
-            output = model(input_ids, audio_similarity, src_key_padding_mask)
+            output = model(input_ids, audio_batch, src_key_padding_mask, audio_mask)
             # manage devices
             target_ids = target_ids.to(output.device)
 
@@ -477,7 +486,7 @@ def any_in_text(items, text):
 
 def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
              batch_size=128, window_size=10, step_size=1, mask=True, easy=False,
-             sep_change=False, augment=0, shuffle=True, oracle=False):
+             sep_change=False, augment=0, uniform=False, shuffle=True, oracle=False):
     """
     Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
@@ -524,6 +533,10 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         Note that it doesn't have any effect if no speaker names (as provided in mapping)
         are present in the input text. If less than 0, will discard real example.
         Defaults to no augmentation.
+    uniform: bool, optional
+        When augmenting data, pick fake names with uniform distribution
+        regardless of their frequency in the name database.
+        Has no effect if augment==0
     shuffle: bool, optional
         Whether to shuffle windows before batching.
         Should be set to False when testing to get file-homogeneous batches,
@@ -540,7 +553,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
     Yields
     -------
     batch: Tuple[str, List[Tuple[int]], List[str], Tensor]:
-        (uri, windows, text_batch, target_batch, input_ids, target_ids, audio_similarity, src_key_padding_mask, tgt_key_padding_mask)
+        (uri, windows, text_batch, target_batch, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask)
         - see batch_encode_multi.
         - uri: str,
           file-identifier of the batch and is set to None if shuffle, as batch
@@ -550,8 +563,6 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
           Empty if shuffling or augmenting data
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
-    with open(mapping) as file:
-        mapping = json.load(file)
 
     if audio_emb is not None:
         audio_emb = Wrapper(audio_emb)
@@ -564,6 +575,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 names += [line.split(',')[3].split()[0]
                           for line in file.read().split("\n") if line != '']
         names = np.array(names)
+        if uniform:
+            names = np.unique(names)
 
     text_windows, audio_windows, target_windows, audio_masks = [], [], [], []
     if oracle and shuffle:
@@ -716,27 +729,22 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
 
 def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
     """align audio windows with word-piece tokenization"""
-    mask = []
+    # init mask to all items
+    mask = ones(max_length, dtype=bool)
     if audio_emb is None:
         return None, mask
     tokens = tokenizer.tokenize(target_window)
-    aligned_audio = []
-    previous_a = np.ones((1, audio_emb.dimension))
+    # init embeddings to 1
+    aligned_audio = ones(max_length, audio_emb.dimension, dtype=float)
     for i, (a, tgt) in enumerate(zip_longest(audio_window, tokens)):
         if i >= max_length:
             break
         # sub-word -> add audio representation of the previous word
         if tgt.startswith('##'):
-            aligned_audio.append(previous_a)
-        else:
-            if a is None:
-                mask.append(i)
-                a = np.ones(audio_emb.dimension)
-            a = a.reshape(1, -1)
-            aligned_audio.append(a)
-            previous_a = a
-    mask = np.array(mask, dtype=int)
-    aligned_audio = np.concatenate(aligned_audio)
+            aligned_audio[i] = aligned_audio[i-1]
+        elif a is not None:
+            mask[i] = False
+            aligned_audio[i] = Tensor(a)
     return aligned_audio, mask
 
 
@@ -754,21 +762,25 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, ind
     # split windows in batches w.r.t. batch_size
     # keep remainder (i.e. last batch of size <= batch_size)
     for i in range(0, len(indices), batch_size):
-        text_batch, target_batch, audio_batch, audio_mask_batch = [], [], [], []
+        text_batch, target_batch, audio_batch, audio_mask = [], [], [], []
         for j in indices[i: i + batch_size]:
             text_batch.append(text_windows[j])
             target_batch.append(target_windows[j])
             audio_window = audio_windows[j]
             if audio_window is not None:
-                audio_batch.append(audio_window)
-                audio_mask_batch.append(audio_masks[j])
+                audio_batch.append(audio_window.unsqueeze(0))
+                audio_mask.append(audio_masks[j].unsqueeze(0))
+        if len(audio_batch) != 0:
+            audio_batch = cat(audio_batch, dim=0)
+            audio_mask = cat(audio_mask, dim=0)
+        else:
+            audio_batch, audio_mask = None, None
         # encode batch (i.e. tokenize, tensorize...)
-        batch = batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch,
-                                   mask=mask, audio_mask_batch=audio_mask_batch)
+        batch = batch_encode_multi(tokenizer, text_batch, target_batch, mask=mask)
 
         # append original text and target to be able to evaluate
         # (FIXME: this might add extra memory usage, unnecessary to train the model)
-        yield (text_batch, target_batch) + batch
+        yield (text_batch, target_batch, audio_batch, audio_mask) + batch
 
 
 def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False, 
@@ -808,8 +820,7 @@ def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False,
     return input_ids, attention_mask
 
 
-def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
-                       mask=True, audio_mask_batch=None):
+def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
     """Encode input, target text and audio consistently in torch Tensor
 
     Parameters
@@ -820,15 +831,9 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
         (batch_size, ) Input text
     target_batch: List[str]
         (batch_size, ) Target speaker names
-    audio_batch: List[np.ndarray], optional
-        (batch_size, ) Audio embeddings of the input text, aligned with target_ids
-        Defaults to None (model only relies on the text).
     mask: bool, optional
         Compute attention_mask according to max_length.
         Defaults to True.
-    audio_mask_batch: List[np.ndarray], optional
-        indices where audio embeddings are not reliable
-        and thus should not weight model's output
 
     Returns
     -------
@@ -837,31 +842,11 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
     relative_targets: Tensor
         (batch_size, max_length, max_length). one-hot target index w.r.t. input_ids
         e.g. "My name is Paul ." -> one-hot([3, 3, 3, 3, 3])
-    audio_similarity: Tensor, optional
-        (batch_size, max_length, max_length). Similarity (e.g. cosine distance)
-        between audio embeddings of words, aligned with target_ids.
-        Defaults to None, indicating that the model should rely only on the text.
     src_key_padding_mask: Tensor, optional
         (batch_size, max_length). Used to mask input_ids.
     tgt_key_padding_mask: Tensor, optional
         (batch_size, max_length). Used to mask relative_targets.
     """
-    if len(audio_batch) != 0:
-        # compute audio similarity matrix (with numpy as torch doesn't have squareform, yet)
-        audio_similarity = np.zeros((len(audio_batch), max_length, max_length), dtype=np.float32)
-        for i, (fX, audio_mask) in enumerate(zip(audio_batch, audio_mask_batch)):
-            d = squareform(pdist(fX, metric='cosine'))
-            # distance to similarity
-            d = 1-d
-            # mask similarity matrix : masked items are only similar to themselves
-            d[audio_mask] = 0
-            d[audio_mask, audio_mask] = 1
-            audio_similarity[i, : d.shape[0], : d.shape[1]] = d
-        # np.ndarray to Tensor
-        audio_similarity = from_numpy(audio_similarity)
-    else:
-        audio_similarity = None
-
     # tokenize and encode input text: (batch_size, max_length)
     input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch,
                                                         mask=mask, is_pretokenized=False,
@@ -888,7 +873,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, audio_batch=None,
             where = where.nonzero().reshape(-1)
             relative_targets[i, j, where] = 1.
 
-    return input_ids, relative_targets, audio_similarity, src_key_padding_mask, tgt_key_padding_mask
+    return input_ids, relative_targets, src_key_padding_mask, tgt_key_padding_mask
 
 
 def visualize(words, model, tokenizer, validate_dir=None):
@@ -961,9 +946,22 @@ if __name__ == '__main__':
     easy = args['--easy']
     sep_change = args['--sep_change']
     augment = int(args['--augment']) if args['--augment'] else 0
+    uniform = args['--uniform']
     protocol = get_protocol(protocol_name)
-    serie, _, _ = protocol_name.split('.')
-    mapping = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
+
+    # handle meta-protocols
+    serie, _, x = protocol_name.split('.')
+    if serie == 'X':
+        series = x.split('+')
+    else:
+        series = [serie]
+
+    # load mapping(s)
+    mapping = {}
+    for serie in series:
+        mapping_path = DATA_PATH / serie / 'annotated_transcripts' / 'names_dict.json'
+        with open(mapping_path) as file:
+            mapping.update(json.load(file))
 
     # instantiate tokenizer
     tokenizer = BertTokenizer.from_pretrained(BERT)
@@ -988,6 +986,7 @@ if __name__ == '__main__':
                                 easy=easy,
                                 sep_change=sep_change,
                                 augment=augment,
+                                uniform=uniform,
                                 shuffle=True))
         model, optimizer = train(batches, model, tokenizer, train_dir,
                                  start_epoch=start_epoch,
@@ -1013,6 +1012,7 @@ if __name__ == '__main__':
                                 easy=easy,
                                 sep_change=sep_change,
                                 augment=augment,
+                                uniform=uniform,
                                 shuffle=False))
         eval(batches, model, tokenizer, validate_dir,
              test=False, evergreen=evergreen, interactive=interactive,
@@ -1038,6 +1038,7 @@ if __name__ == '__main__':
                                 easy=easy,
                                 sep_change=sep_change,
                                 augment=augment,
+                                uniform=uniform,
                                 shuffle=False))
 
         eval(batches, model, tokenizer, test_dir,
@@ -1053,8 +1054,6 @@ if __name__ == '__main__':
         architecture = config.get('architecture', {})
         model = DataParallel(SidNet(BERT, max_length, **architecture))
         # get list of names
-        with open(mapping) as file:
-            mapping = json.load(file)
         words = set(mapping.values())
         visualize(words, model, tokenizer, validate_dir)
     elif args['oracle']:
