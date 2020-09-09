@@ -3,6 +3,24 @@ Code for Plumcot project which doesn't fit in https://github.com/pyannote, https
 
 See also https://github.com/PaulLerner/Forced-Alignment which unfortunately contains closed source dependencies.
 
+## Installation
+
+:warning: The code has only been tested with:
+- GPUs and might need some refactoring to work on CPU
+- `pytorch 1.5.1`
+- `transformers 2.11.0`
+
+Make sure you install `pytorch` properly given the instructions in https://pytorch.org/get-started/locally/
+
+Until the package has been published on PyPI, one has to run the following commands:
+
+```bash
+$ git clone https://github.com/PaulLerner/Prune.git
+$ pip install Prune
+$ git clone https://github.com/PaulLerner/pyannote-db-plumcot.git
+$ pip install pyannote-db-plumcot
+```
+
 ## Named-identification
 ### `named_id.py`
 
