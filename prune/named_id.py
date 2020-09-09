@@ -358,8 +358,8 @@ def eval(batches, model, tokenizer, log_dir,
                 # visualize relative word position distribution w.r.t. model's accuracy
                 bins = 50
                 plt.figure(figsize=(16, 10))
-                _, bins, _ = plt.hist(rights, normed=True, bins=bins, label='Right', alpha=.5)
-                plt.hist(wrongs, normed=True, bins=bins, label='Wrong', alpha=.5)
+                _, bins, _ = plt.hist(rights, density=True, bins=bins, label='Right', alpha=.5)
+                plt.hist(wrongs, density=True, bins=bins, label='Wrong', alpha=.5)
                 plt.xlabel('Relative word position')
                 plt.ylabel('Density')
                 plt.legend()
@@ -606,6 +606,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
     for current_file in tqdm(getattr(protocol, subset)(), desc='Loading transcriptions'):
         if not shuffle:
             oracle_correct, oracle_total = 0, 0
+            oracle_right, oracle_wrong = [], []
             n_tokens = []
             text_windows, audio_windows, target_windows, audio_masks = [], [], [], []
         transcription = current_file['transcription']
@@ -674,11 +675,14 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             # compute oracle-accuracy
             if oracle:
                 n_tokens.append(end-start)
-                for target in targets[start:end]:
+                for t, target in enumerate(targets[start:end]):
                     if target in tokenizer.all_special_tokens:
                         continue
                     if re.search(target, text_window, flags=re.IGNORECASE):
                         oracle_correct += 1
+                        oracle_right.append(t/(end-start))
+                    else:
+                        oracle_wrong.append(t/(end-start))
                     oracle_total += 1
             # set of actual targets (i.e. excluding [PAD], [SEP], etc.)
             target_set = sorted(set(targets[start:end]) - set(tokenizer.all_special_tokens))
@@ -732,7 +736,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 yield (uri, windows) + batch
         # yield (uri, oracle_accuracy)
         elif oracle:
-            yield uri, oracle_correct/oracle_total, n_tokens
+            yield uri, oracle_correct/oracle_total, n_tokens, oracle_right, oracle_wrong
     if shuffle:
         # shuffle all windows
         indices = np.arange(len(text_windows))
@@ -1080,20 +1084,25 @@ if __name__ == '__main__':
         subset = args['--subset'] if args['--subset'] else 'test'
         full_name = f"{protocol_name}.{subset}"
         # get oracle accuracy for protocol subset
-        uris, accuracies, n_tokens = [], [], []
-        for uri, accuracy, n_token in batchify(tokenizer, protocol, mapping, subset,
-                                      batch_size=batch_size,
-                                      window_size=window_size,
-                                      step_size=step_size,
-                                      mask=mask,
-                                      easy=easy,
-                                      sep_change=sep_change,
-                                      augment=augment,
-                                      shuffle=False,
-                                      oracle=True):
+        uris, accuracies, n_tokens, oracle_rights, oracle_wrongs = [], [], [], [], []
+        for uri, accuracy, n_token, oracle_right, oracle_wrong in batchify(tokenizer,
+                                                                           protocol,
+                                                                           mapping,
+                                                                           subset,
+                                                                           batch_size=batch_size,
+                                                                           window_size=window_size,
+                                                                           step_size=step_size,
+                                                                           mask=mask,
+                                                                           easy=easy,
+                                                                           sep_change=sep_change,
+                                                                           augment=augment,
+                                                                           shuffle=False,
+                                                                           oracle=True):
             uris.append(uri)
             accuracies.append(accuracy)
-            n_tokens.extend(n_token)
+            n_tokens += n_token
+            oracle_rights += oracle_right
+            oracle_wrongs += oracle_wrong
         n_tokens = f"{np.mean(n_tokens):.2f} $\\pm$ {np.std(n_tokens):.2f}"
         uris.append(full_name)
         accuracies.append(np.mean(accuracies))
@@ -1103,4 +1112,15 @@ if __name__ == '__main__':
         # print oracle accuracy
         print(tabulate(zip(uris, accuracies), headers=('uri', 'accuracy'), tablefmt='latex'))
         print("\\caption{%s}" % caption)
+
+        # visualize relative word position distribution w.r.t. oracle's accuracy
+        bins = 50
+        plt.figure(figsize=(16, 10))
+        _, bins, _ = plt.hist(oracle_rights, density=True, bins=bins, label='Right', alpha=.5)
+        plt.hist(oracle_wrongs, density=True, bins=bins, label='Wrong', alpha=.5)
+        plt.xlabel('Relative word position')
+        plt.ylabel('Density')
+        plt.legend()
+        plt.savefig(f"{full_name}.w={window_size}."
+                    f"relative_word_pos_dist_wrt_oracle_accuracy.png")
 
