@@ -127,8 +127,9 @@ class SidNet(Module):
                 indent = '    ' * (name.count('.') + 1)
                 name = name.split('.')[-1]
             trainable, total = total_params(module)
-            lines.append(f'{indent} {name} ({module.__class__.__name__}): '
-                         f'{trainable:,d} ({total:,d} total)')
+            extra_repr = f': {module.extra_repr()}' if module.extra_repr() else ''
+            lines.append(f'{indent}{name} ({module.__class__.__name__}{extra_repr}) -> '
+                         f'{trainable:,d} trainable parameters ({total:,d} total)')
         return '\n'.join(lines)
 
     def forward(self, input_ids, audio_similarity=None, src_key_padding_mask=None):
