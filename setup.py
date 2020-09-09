@@ -14,7 +14,10 @@ setup(
         "prune/visualize.py",
         "prune/convert.py"
     ],
-
+    install_requires=[
+        'pyannote.audio >= 2.0',
+        'transformers >= 2.11'
+    ],
     long_description=long_description,
     long_description_content_type='text/markdown',
 
