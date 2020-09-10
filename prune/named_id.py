@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 """Usage:
-named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>] [(--augment=<ratio> [--uniform])] [--mask_names]
+named_id.py train <protocol> <experiment_dir> [options] [--from=<epoch>] [(--augment=<ratio> [--uniform])]
 named_id.py validate <protocol> <train_dir> [options] [--evergreen --interactive]
 named_id.py test <protocol> <validate_dir> [options] [--interactive]
 named_id.py oracle <protocol> [options]
@@ -943,6 +943,9 @@ if __name__ == '__main__':
     mask = True
     easy = args['--easy']
     sep_change = args['--sep_change']
+    augment = int(args['--augment']) if args['--augment'] else 0
+    uniform = args['--uniform']
+    mask_names = args['--mask_names']
     protocol = get_protocol(protocol_name)
 
     # handle meta-protocols
@@ -971,9 +974,6 @@ if __name__ == '__main__':
         architecture = config.get('architecture', {})
         audio = config.get('audio')
         start_epoch = int(args['--from']) if args['--from'] else None
-        augment = int(args['--augment']) if args['--augment'] else 0
-        uniform = args['--uniform']
-        mask_names = args['--mask_names']
 
         train_dir.mkdir(exist_ok=True)
         model = DataParallel(SidNet(BERT, max_length, **architecture))
@@ -1015,7 +1015,8 @@ if __name__ == '__main__':
                                 sep_change=sep_change,
                                 augment=augment,
                                 uniform=uniform,
-                                shuffle=False))
+                                shuffle=False,
+                                mask_names=mask_names))
         eval(batches, model, tokenizer, validate_dir,
              test=False, evergreen=evergreen, interactive=interactive,
              step_size=step_size, window_size=window_size)
@@ -1041,7 +1042,8 @@ if __name__ == '__main__':
                                 sep_change=sep_change,
                                 augment=augment,
                                 uniform=uniform,
-                                shuffle=False))
+                                shuffle=False,
+                                mask_names=mask_names))
 
         eval(batches, model, tokenizer, test_dir,
              test=True, interactive=interactive,
