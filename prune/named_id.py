@@ -326,11 +326,15 @@ def eval(batches, model, tokenizer, log_dir,
             tb.add_scalar('Loss/eval', epoch_loss, epoch)
             epoch_word_acc /= len(batches)
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc, epoch)
+
+            # format file-accuracies in % with .2f
+            file_word_acc = [f'{acc*100:.2f}' for acc in file_word_acc]
+
             # print and write metrics
             if test:
                 metrics = {
                     'Loss/eval': [epoch_loss],
-                    'Accuracy/eval/batch/word': [epoch_word_acc]
+                    'Accuracy/eval/batch/word': [f'{epoch_word_acc*100:.2f}']
                 }
                 metrics = tabulate(metrics, headers='keys', tablefmt='latex')
                 metrics += tabulate(zip(uris, file_word_acc),

@@ -3,6 +3,24 @@ Code for Plumcot project which doesn't fit in https://github.com/pyannote, https
 
 See also https://github.com/PaulLerner/Forced-Alignment which unfortunately contains closed source dependencies.
 
+## Installation
+
+:warning: The code has only been tested with:
+- GPUs and might need some refactoring to work on CPU
+- `pytorch 1.5.1`
+- `transformers 2.11.0`
+
+Make sure you install `pytorch` properly given the instructions in https://pytorch.org/get-started/locally/
+
+Until the package has been published on PyPI, one has to run the following commands:
+
+```bash
+$ git clone https://github.com/PaulLerner/Prune.git
+$ pip install Prune
+$ git clone https://github.com/PaulLerner/pyannote-db-plumcot.git
+$ pip install pyannote-db-plumcot
+```
+
 ## Named-identification
 ### `named_id.py`
 
@@ -25,12 +43,18 @@ File structure and usage is very similar to `pyannote.audio`:
 
 `config.yml` is optional to set additional parameters (e.g. change the default model architecture)
 
+- Common options allow to split the data in batches of given size, 
+  formatted in windows of `window` speaker turns with a given `step`.
+  Speaker turns are themselves padded to `max_len`.
+  `--easy` should be used for training or visualization purposes: it keeps only windows with at least one named speaker in the input.
+  Idem for `--sep_change` which adds a special "[SEP]" token between every speaker turn.
 - `train` will train the model for `epochs` epochs, starting from `--from=<epoch>` (defaults to 0), dropping checkpoints every `save_every`.
   You can also customize learning rate, gradient clipping and freeze modules.
 - `validate` will evaluate each checkpoint of the trained model and store the best metric in `params.yml`. 
   You can pick the validation order with `--evergreen` and visualize examples with `--interactive`
 - `test` will evaluate only the best model according to the previous validation step, print and write the metrics in `eval`
-- `oracle` will run and evaluate an oracle that knows who the speaker is if it's name (case-insensitive) is mentioned in the input
+- `oracle` will run and evaluate an oracle that knows who the speaker is if it's name (case-insensitive) is mentioned in the input.
+  The dedicated script `oracle.py` works the same but at the file-level (no speaker turn windows)
 - `visualize` will apply a t-SNE over speaker name embeddings, either from raw BERT or fine-tuned model
  
 Have a look at the `named_id.py` docstring for further details.
