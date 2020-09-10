@@ -318,18 +318,20 @@ def eval(batches, model, tokenizer, log_dir,
             # average file-accuracies
             uris.append('TOTAL')
             file_word_acc.append(np.mean(file_word_acc))
+            # format file-accuracies in % with .2f
+            file_word_acc = [f'{acc*100:.2f}' for acc in file_word_acc]
 
             # log tensorboard
             tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
             epoch_loss /= len(batches)
             tb.add_scalar('Loss/eval', epoch_loss, epoch)
-            epoch_word_acc /= len(batches)
+            epoch_word_acc *= 100/len(batches)
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc, epoch)
             # print and write metrics
             if test:
                 metrics = {
                     'Loss/eval': [epoch_loss],
-                    'Accuracy/eval/batch/word': [epoch_word_acc]
+                    'Accuracy/eval/batch/word': [f'{epoch_word_acc:.2f}']
                 }
                 metrics = tabulate(metrics, headers='keys', tablefmt='latex')
                 metrics += tabulate(zip(uris, file_word_acc),
