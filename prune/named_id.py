@@ -28,7 +28,8 @@ Training options:
                      Defaults to no augmentation.
 --uniform            When augmenting data, pick fake names with uniform distribution
                      regardless of their frequency in the name database.
---mask_names         Mask target names in input
+--mask_names=<ratio> Mask (in the attention computation) <ratio> target names in input.
+                     Defaults to no masking.
 
 Validation options:
 --evergreen          Start with the latest checkpoints
@@ -473,7 +474,7 @@ def any_in_text(items, text):
 def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
              batch_size=128, window_size=10, step_size=1, mask=True, easy=False,
              sep_change=False, augment=0, uniform=False, shuffle=True,
-             oracle=False, mask_names=False):
+             oracle=False, mask_names=0.):
     """
     Iterates over protocol subset, segment transcription in speaker turns,
     Divide transcription in windows then split windows in batches.
@@ -536,9 +537,9 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         is mentioned in the input. Most of the other arguments are not relevant
         in this case, and yields (uri, accuracy, n_tokens) instead of what's documented below.
         Defaults to False
-    mask_names: bool, optional
-        mask target names in input
-        Defaults to False
+    mask_names: float, optional
+        Mask (in the attention computation) <ratio> target names in input.
+        Defaults to no masking
 
     Yields
     -------
@@ -739,7 +740,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
 
 
 def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, indices,
-                     batch_size=128, mask=True, audio_masks=None, mask_names=False):
+                     batch_size=128, mask=True, audio_masks=None, mask_names=0.):
     """
     Parameters
     ----------
@@ -811,7 +812,7 @@ def batch_encode_plus(tokenizer, text_batch, mask=True, is_pretokenized=False,
     return input_ids, attention_mask
 
 
-def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True, mask_names=False):
+def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True, mask_names=0.):
     """Encode input, target text and audio consistently in torch Tensor
 
     Parameters
@@ -825,9 +826,9 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True, mask_name
     mask: bool, optional
         Compute attention_mask according to max_length.
         Defaults to True.
-    mask_names: bool, optional
-        Mask target names in input.
-        Defaults to False.
+    mask_names: float, optional
+        Mask (in the attention computation) <ratio> target names in input.
+        Defaults to no masking
 
     Returns
     -------
@@ -854,7 +855,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True, mask_name
     tgt_key_padding_mask[target_ids==tokenizer.pad_token_id] = tokenizer.pad_token_id
 
     # convert targets to relative targets: (batch_size, max_length, max_length)
-    # and mask target names in input if mask_names
+    # and mask target names in input if mask_names > 0.
     relative_targets = zeros(target_ids.shape + (max_length,))
     for i, (input_id, target_id) in enumerate(zip(input_ids, target_ids)):
         for j, t in enumerate(target_id):
@@ -868,7 +869,8 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True, mask_name
             where = where.nonzero().reshape(-1)
             relative_targets[i, j, where] = 1.
             # mask target names in input
-            if mask_names:
+            ratio = np.random.rand()
+            if ratio < mask_names:
                 src_key_padding_mask[i, where] = tokenizer.pad_token_id
 
     return input_ids, relative_targets, src_key_padding_mask, tgt_key_padding_mask
@@ -945,7 +947,7 @@ if __name__ == '__main__':
     sep_change = args['--sep_change']
     augment = int(args['--augment']) if args['--augment'] else 0
     uniform = args['--uniform']
-    mask_names = args['--mask_names']
+    mask_names = float(args['--mask_names']) if args['--mask_names'] else 0.
     protocol = get_protocol(protocol_name)
 
     # handle meta-protocols
