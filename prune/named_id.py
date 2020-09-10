@@ -88,7 +88,8 @@ from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
 
 from torch import save, load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, \
-    zeros_like, LongTensor, ones, float, cat
+    zeros_like, LongTensor, ones, cat
+from torch import float as torch_float
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
@@ -726,7 +727,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
         return None, mask
     tokens = tokenizer.tokenize(target_window)
     # init embeddings to 1
-    aligned_audio = ones(max_length, audio_emb.dimension, dtype=float)
+    aligned_audio = ones(max_length, audio_emb.dimension, dtype=torch_float)
     for i, (a, tgt) in enumerate(zip_longest(audio_window, tokens)):
         if i >= max_length:
             break
