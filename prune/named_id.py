@@ -355,15 +355,8 @@ def eval(batches, model, tokenizer, log_dir,
                 plt.ylabel('Accuracy (word/batch-level)')
                 plt.savefig(log_dir/"accuracy_wrt_absolute_word_position.png")
 
-                # visualize relative word position distribution w.r.t. model's accuracy
-                bins = 50
-                plt.figure(figsize=(16, 10))
-                _, bins, _ = plt.hist(rights, density=True, bins=bins, label='Right', alpha=.5)
-                plt.hist(wrongs, density=True, bins=bins, label='Wrong', alpha=.5)
-                plt.xlabel('Relative word position')
-                plt.ylabel('Density')
-                plt.legend()
-                plt.savefig(log_dir/"relative_word_pos_dist_wrt_accuracy.png")
+                # visualize model's accuracy w.r.t. relative word position
+                plot_relative_accuracy(rights, wrongs, log_dir/"accuracy_wrt_relative_word_pos.png")
 
                 # print and write metrics
                 metrics = {
@@ -958,6 +951,20 @@ def load_config(parent_path):
         return yaml.load(file, Loader=yaml.SafeLoader)
 
 
+def plot_relative_accuracy(rights, wrongs, save):
+    bins = max_length//2
+    n_rights, bins, _ = plt.hist(rights, bins=bins)
+    n_wrongs, _, _ = plt.hist(wrongs, bins=bins)
+    totals = n_rights+n_wrongs
+    plt.close()
+    plt.figure(figsize=(16, 10))
+    plt.scatter(np.arange(n_rights.shape[0]), n_rights / totals,
+                linewidths=totals / totals.mean(), alpha=.5)
+    plt.ylabel('Accuracy (word/batch-level)')
+    plt.xlabel('Relative word position')
+    plt.savefig(save)
+
+
 if __name__ == '__main__':
     # parse arguments and get protocol
     args = docopt(__doc__)
@@ -1113,14 +1120,7 @@ if __name__ == '__main__':
         print(tabulate(zip(uris, accuracies), headers=('uri', 'accuracy'), tablefmt='latex'))
         print("\\caption{%s}" % caption)
 
-        # visualize relative word position distribution w.r.t. oracle's accuracy
-        bins = 50
-        plt.figure(figsize=(16, 10))
-        _, bins, _ = plt.hist(oracle_rights, density=True, bins=bins, label='Right', alpha=.5)
-        plt.hist(oracle_wrongs, density=True, bins=bins, label='Wrong', alpha=.5)
-        plt.xlabel('Relative word position')
-        plt.ylabel('Density')
-        plt.legend()
-        plt.savefig(f"{full_name}.w={window_size}."
-                    f"relative_word_pos_dist_wrt_oracle_accuracy.png")
+        # visualize oracle's accuracy  w.r.t. relative word position
+        plot_relative_accuracy(oracle_rights, oracle_wrongs, f"{full_name}.w={window_size}."
+                                                             f"oracle_accuracy_wrt_relative_word_pos.png")
 
