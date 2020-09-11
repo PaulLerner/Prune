@@ -68,6 +68,9 @@ class SidNet(Module):
     activation: `str`, optional
         The activation function of intermediate layer of the FFN: 'relu' or 'gelu'
          Defaults to 'relu'
+    tie_weights: `bool`, optional
+        Tie position-embedding and classification layer weights.
+        Defaults to False
 
     References
     ----------
@@ -75,7 +78,7 @@ class SidNet(Module):
     """
 
     def __init__(self, bert='bert-base-cased', out_size=256, num_layers=6, nhead=8,
-                 dim_feedforward=2048, dropout=0.1, activation='relu'):
+                 dim_feedforward=2048, dropout=0.1, activation='relu', tie_weights=False):
 
         super().__init__()
         self.bert = BertModel.from_pretrained(bert)
@@ -97,7 +100,9 @@ class SidNet(Module):
                                               encoder_norm)
 
         # handle classification layer and weight-tying
-        self.linear = Linear(self.hidden_size, self.out_size)
+        self.linear = Linear(self.hidden_size, self.out_size, bias=not tie_weights)
+        if tie_weights:
+            self.linear.weight = self.bert.embeddings.position_embeddings.weight
 
         self.activation = Sigmoid()
 
