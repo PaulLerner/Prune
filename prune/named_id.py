@@ -427,10 +427,11 @@ def eval(batches, model, tokenizer, log_dir,
 
             # print and write metrics
             if test:
+                epoch_alias_acc = format_acc(epoch_alias_acc) if aliases else "-"
                 metrics = {
                     'Loss/eval': [epoch_loss],
                     'Accuracy/eval/batch/word': [format_acc(epoch_word_acc)],
-                    'Accuracy/eval/batch/speaker_alias': [format_acc(epoch_alias_acc)]
+                    'Accuracy/eval/batch/speaker_alias': [epoch_alias_acc]
                 }
                 metrics = tabulate(metrics, headers='keys', tablefmt='latex')
                 metrics += tabulate(zip_longest(uris, file_word_acc, file_alias_acc, fillvalue='-'),
