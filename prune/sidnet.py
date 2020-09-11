@@ -60,6 +60,9 @@ class SidNet(Module):
     audio_dim: `int`, optional
         Dimension of the audio embeddings.
         Defaults to 512.
+    tie_weights: `bool`, optional
+        Tie position-embedding and classification layer weights.
+        Defaults to False
 
     References
     ----------
@@ -67,7 +70,7 @@ class SidNet(Module):
     """
 
     def __init__(self, bert='bert-base-cased', out_size=256, num_layers=6, nhead=8,
-                 dim_feedforward=2048, dropout=0.1, activation='relu', audio_dim=512):
+                 dim_feedforward=2048, dropout=0.1, activation='relu', audio_dim=512, tie_weights=False):
 
         super().__init__()
         self.bert = BertModel.from_pretrained(bert)
@@ -93,8 +96,10 @@ class SidNet(Module):
             self.decoder = TransformerDecoder(decoder_layer, self.decoder_num_layers,
                                               decoder_norm)
 
-        # handle classification layer
-        self.linear = Linear(self.hidden_size, self.out_size)
+        # handle classification layer and weight-tying
+        self.linear = Linear(self.hidden_size, self.out_size, bias=not tie_weights)
+        if tie_weights:
+            self.linear.weight = self.bert.embeddings.position_embeddings.weight
 
         self.activation = Sigmoid()
 
