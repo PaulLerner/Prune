@@ -859,20 +859,21 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True, mask_name
     # and mask target names in input if mask_names > 0.
     relative_targets = zeros(target_ids.shape + (max_length,))
     for i, (input_id, target_id) in enumerate(zip(input_ids, target_ids)):
-        for j, t in enumerate(target_id):
+        for t in target_id.unique():
             if t == tokenizer.pad_token_id:
                 continue
-            where = input_id == t
+            input_where = input_id == t
+            target_where = (target_id == t)#.nonzero().reshape(-1)
             # speaker name is not mentioned in input -> pad target
-            if not where.any():
-                tgt_key_padding_mask[i, j] = tokenizer.pad_token_id
+            if not input_where.any():
+                tgt_key_padding_mask[i, target_where] = tokenizer.pad_token_id
                 continue
-            where = where.nonzero().reshape(-1)
-            relative_targets[i, j, where] = 1.
+            input_where = input_where.nonzero().reshape(-1)
+            relative_targets[i, target_where, input_where] = 1.
             # mask target names in input
             ratio = np.random.rand()
             if ratio < mask_names:
-                src_key_padding_mask[i, where] = tokenizer.pad_token_id
+                src_key_padding_mask[i, input_where] = tokenizer.pad_token_id
 
     return input_ids, relative_targets, src_key_padding_mask, tgt_key_padding_mask
 
