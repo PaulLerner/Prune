@@ -753,6 +753,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                                                            audio[start:end],
                                                            target_window,
                                                            audio_emb)
+            speaker_id_windows.append(speaker_ids[start: end])
             # compute oracle-accuracy
             if oracle:
                 n_tokens.append(end-start)
@@ -789,7 +790,6 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 audio_windows.append(audio_window)
                 target_windows.append(target_window)
                 audio_masks.append(audio_mask)
-                speaker_id_windows.append(speaker_ids[start: end])
 
             # add `augment` windows of synthetic data
             for augmentation in range(abs(augment)):
