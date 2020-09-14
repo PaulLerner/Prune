@@ -868,9 +868,10 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True, mask_name
             if not input_where.any():
                 tgt_key_padding_mask[i, target_where] = tokenizer.pad_token_id
                 continue
-            # FIXME: why is it necessary to do all this reshaping and indexing ?
             input_where = input_where.nonzero().reshape(-1)
-            relative_targets[i, target_where][:, input_where] = 1.
+            # FIXME: how to index properly (e.g. relative_targets[i, target_where, input_where])
+            for j in target_where:
+                relative_targets[i, j, input_where] = 1.
             # mask target names in input
             ratio = np.random.rand()
             if ratio < mask_names:
