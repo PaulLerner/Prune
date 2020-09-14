@@ -220,10 +220,11 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
         merge.append(f"{token} ({tgt_eg[i]})")
         if not token.startswith('##'):
             i += 1
-    max_len = len(inp_eg)
+    inp_eg.append("[UNK_SPK]")
+    max_len = max_length+1
     plt.figure(figsize=(max_len//6, max_len//6))
     # shift by 1 to discard [CLS] and [SEP] tokens
-    plt.imshow(output_eg.detach().cpu().numpy()[:max_len, 1: max_len-1])
+    plt.imshow(output_eg.detach().cpu().numpy())
     plt.colorbar()
     plt.xticks(range(max_len), inp_eg[:max_len], fontsize='x-small', rotation='vertical')
     plt.yticks(range(max_len), merge[:max_len], fontsize='x-small', rotation='horizontal')
@@ -309,7 +310,8 @@ def eval(batches, model, tokenizer, log_dir,
                 target_ids = target_ids.to(output.device)
 
                 # get model prediction per token: (batch_size, sequence_length)
-                relative_out = argmax(output, dim=2)
+                # trim output to max_length to discard unknown speakers and get output w.r.t. input
+                relative_out = argmax(output[:, :, :max_length], dim=2)
                 # retrieve token ids from input (batch_size, sequence_length) and manage device
                 prediction_ids = zeros_like(input_ids, device=output.device)
                 for j, (input_window_id, relative_window_out) in enumerate(zip(input_ids, relative_out)):
@@ -493,8 +495,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
     weights_path = train_dir / 'weights'
     # load previous checkpoint
     if start_epoch is not None:
-        checkpoint = load(weights_path / EPOCH_FORMAT.format(start_epoch)
-                          ,map_location=model.src_device_obj)
+        checkpoint = load(weights_path / EPOCH_FORMAT.format(start_epoch), map_location=model.src_device_obj)
         assert start_epoch == checkpoint["epoch"]
         model.module.load_state_dict(checkpoint['model_state_dict'])
         # manage device FIXME this should be ok after map_location ??                 
@@ -964,12 +965,14 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
     input_ids: Tensor
         (batch_size, max_length). Encoded input tokens using BertTokenizer
     relative_targets: Tensor
-        (batch_size, max_length, max_length). one-hot target index w.r.t. input_ids
+        (batch_size, max_length, max_length+1). one-hot target index w.r.t. input_ids
         e.g. "My name is Paul ." -> one-hot([3, 3, 3, 3, 3])
+        the extra unit is for unknown speakers (when speaker name in not in the input)
     src_key_padding_mask: Tensor, optional
         (batch_size, max_length). Used to mask input_ids.
     tgt_key_padding_mask: Tensor, optional
-        (batch_size, max_length). Used to mask relative_targets.
+        (batch_size, max_length+1). Used to mask relative_targets.
+        the extra unit is for unknown speakers (when speaker name in not in the input)
     """
     # tokenize and encode input text: (batch_size, max_length)
     input_ids, src_key_padding_mask = batch_encode_plus(tokenizer, text_batch,
@@ -982,21 +985,27 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
 
     # fix tgt_key_padding_mask for previously padded targets
     tgt_key_padding_mask[target_ids==tokenizer.pad_token_id] = tokenizer.pad_token_id
+    # add extra column for unknown speakers (when speaker name in not in the input)
+    tgt_key_padding_mask = cat((tgt_key_padding_mask,
+                                zeros(tgt_key_padding_mask.shape[0], 1, dtype=tgt_key_padding_mask.dtype)),
+                               dim=1)
 
-    # convert targets to relative targets: (batch_size, max_length, max_length)
-    relative_targets = zeros(target_ids.shape + (max_length,))
+    # convert targets to relative targets: (batch_size, max_length, max_length+1)
+    # the extra unit is for unknown speakers (when speaker name in not in the input)
+    relative_targets = zeros(target_ids.shape + (max_length+1,))
     for i, (input_id, target_id) in enumerate(zip(input_ids, target_ids)):
         for j, t in enumerate(target_id):
             if t == tokenizer.pad_token_id:
                 continue
             where = input_id == t
-            # speaker name is not mentioned in input -> pad target
+            # speaker name is not mentioned in input -> target unknown speaker (last item)
+            # and make sure its not padded
             if not where.any():
-                tgt_key_padding_mask[i, j] = tokenizer.pad_token_id
-                continue
-            where = where.nonzero().reshape(-1)
+                where = -1
+                tgt_key_padding_mask[i, where] = 1
+            else:
+                where = where.nonzero().reshape(-1)
             relative_targets[i, j, where] = 1.
-
     return input_ids, relative_targets, src_key_padding_mask, tgt_key_padding_mask
 
 
@@ -1100,7 +1109,7 @@ if __name__ == '__main__':
         config = load_config(train_dir.parents[0])
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = DataParallel(SidNet(BERT, max_length, **architecture))
+        model = DataParallel(SidNet(BERT, max_length+1, **architecture))
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
                                 batch_size=batch_size,
@@ -1125,7 +1134,7 @@ if __name__ == '__main__':
 
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = DataParallel(SidNet(BERT, max_length, **architecture))
+        model = DataParallel(SidNet(BERT, max_length+1, **architecture))
 
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
@@ -1151,7 +1160,7 @@ if __name__ == '__main__':
 
         architecture = config.get('architecture', {})
         audio = config.get('audio')
-        model = DataParallel(SidNet(BERT, max_length, **architecture))
+        model = DataParallel(SidNet(BERT, max_length+1, **architecture))
 
         # get batches from protocol subset
         batches = list(batchify(tokenizer, protocol, mapping, subset, audio_emb=audio,
