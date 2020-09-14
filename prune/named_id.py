@@ -385,7 +385,7 @@ def eval(batches, model, tokenizer, log_dir,
                         'Accuracy/eval/batch/word': [format_acc(epoch_word_acc)],
                         'Accuracy/eval/batch/speaker_alias': [format_acc(epoch_alias_acc)]
                     }
-                    print(tabulate(metrics, headers='keys'))
+                    print(tabulate(metrics, headers='keys', disable_numparse=True))
                     breakpoint()
 
                 previous_uri = uri
@@ -433,10 +433,11 @@ def eval(batches, model, tokenizer, log_dir,
                     'Accuracy/eval/batch/word': [format_acc(epoch_word_acc)],
                     'Accuracy/eval/batch/speaker_alias': [epoch_alias_acc]
                 }
-                metrics = tabulate(metrics, headers='keys', tablefmt='latex')
+                metrics = tabulate(metrics, headers='keys', tablefmt='latex', disable_numparse=True)
                 metrics += tabulate(zip_longest(uris, file_word_acc, file_alias_acc, fillvalue='-'),
-                                   headers=['uri', 'word-level', 'alias'],
-                                   tablefmt='latex')
+                                    headers=['uri', 'word-level', 'alias'],
+                                    tablefmt='latex',
+                                    disable_numparse=True)
                 print(metrics)
                 with open(log_dir / 'eval', 'w') as file:
                     file.write(metrics)
