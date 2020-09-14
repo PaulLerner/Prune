@@ -971,7 +971,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
     src_key_padding_mask: Tensor, optional
         (batch_size, max_length). Used to mask input_ids.
     tgt_key_padding_mask: Tensor, optional
-        (batch_size, max_length+1). Used to mask relative_targets.
+        (batch_size, max_length, max_length+1). Used to mask relative_targets.
         the extra unit is for unknown speakers (when speaker name in not in the input)
     """
     # tokenize and encode input text: (batch_size, max_length)
@@ -989,6 +989,8 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
     tgt_key_padding_mask = cat((tgt_key_padding_mask,
                                 zeros(tgt_key_padding_mask.shape[0], 1, dtype=tgt_key_padding_mask.dtype)),
                                dim=1)
+    # repeat mask for all sequence length
+    tgt_key_padding_mask = tgt_key_padding_mask.unsqueeze(1).repeat(1, max_length, 1)
 
     # convert targets to relative targets: (batch_size, max_length, max_length+1)
     # the extra unit is for unknown speakers (when speaker name in not in the input)
@@ -1002,7 +1004,7 @@ def batch_encode_multi(tokenizer, text_batch, target_batch, mask=True):
             # and make sure its not padded
             if not where.any():
                 where = -1
-                tgt_key_padding_mask[i, where] = 1
+                tgt_key_padding_mask[i, j, where] = 1
             else:
                 where = where.nonzero().reshape(-1)
             relative_targets[i, j, where] = 1.
