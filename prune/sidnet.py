@@ -5,7 +5,7 @@ from typing import List
 
 import numpy as np
 
-from transformers import BertModel
+from transformers import BertModel, BertConfig
 from torch.nn import TransformerDecoder, TransformerDecoderLayer, Module, Linear, \
     Sigmoid, LayerNorm, Embedding
 from torch import Tensor, arange
@@ -52,7 +52,8 @@ class SidNet(Module):
         The dimension of the feedforward network model (FFN) in each decoder layer.
         Defaults to 2048
     dropout: `float`, optional
-        The dropout rate in-between each block (attn or FFN) of each decoder layer
+        The dropout rate in-between each block (attn or FFN) of each transformer layer
+        (both in self.bert and self.decoder)
         Defaults to 0.1
     activation: `str`, optional
         The activation function of intermediate layer of the FFN: 'relu' or 'gelu'
@@ -73,7 +74,11 @@ class SidNet(Module):
                  dim_feedforward=2048, dropout=0.1, activation='relu', audio_dim=512, tie_weights=False):
 
         super().__init__()
-        self.bert = BertModel.from_pretrained(bert)
+        self.dropout = dropout
+        self.bert_config = BertConfig.from_pretrained(bert)
+        self.bert_config.hidden_dropout_prob = self.dropout
+        self.bert_config.attention_probs_dropout_prob = self.dropout
+        self.bert = BertModel.from_pretrained(bert, config=self.bert_config)
         self.hidden_size = self.bert.config.hidden_size
         self.out_size = out_size
         self.audio_dim = audio_dim
@@ -88,13 +93,10 @@ class SidNet(Module):
             # linear layer so that audio and text embeddings have the same dimension
             self.resize_audio = Linear(self.audio_dim, self.hidden_size)
             # init decoder_layer with the parameters
-            decoder_layer = TransformerDecoderLayer(self.hidden_size, nhead,
-                                                    dim_feedforward,
-                                                    dropout, activation)
+            decoder_layer = TransformerDecoderLayer(self.hidden_size, nhead, dim_feedforward, self.dropout, activation)
             decoder_norm = LayerNorm(self.hidden_size)
             # init decoder with decoder_layer
-            self.decoder = TransformerDecoder(decoder_layer, self.decoder_num_layers,
-                                              decoder_norm)
+            self.decoder = TransformerDecoder(decoder_layer, self.decoder_num_layers, decoder_norm)
 
         # handle classification layer and weight-tying
         self.linear = Linear(self.hidden_size, self.out_size, bias=not tie_weights)
