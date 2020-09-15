@@ -102,6 +102,7 @@ manual_seed(0)
 EPOCH_FORMAT = '{:04d}.tar'
 BERT = 'bert-base-cased'
 PROPN = 'PROPN'
+WP_START='##'
 
 # constant paths
 DATA_PATH = Path(PC.__file__).parent / 'data'
@@ -227,7 +228,7 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
     i = 0
     for token in inp_eg:
         merge.append(f"{token} ({tgt_eg[i]})")
-        if not token.startswith('##'):
+        if not token.startswith(WP_START):
             i += 1
     max_len = len(inp_eg)
     plt.figure(figsize=(max_len//6, max_len//6))
@@ -245,12 +246,12 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
 
 def plot_accuracy(rights, wrongs, save=None, ylabel='Accuracy', xlabel='Confidence'):
     bins = 50
-    n_rights, bins, _ = plt.hist(rights, bins=bins)
-    n_wrongs, _, _ = plt.hist(wrongs, bins=bins)
+    n_wrongs, bins, _ = plt.hist(wrongs, bins=bins)
+    n_rights, _, _ = plt.hist(rights, bins=bins)
     totals = n_rights+n_wrongs
     plt.close()
     plt.figure(figsize=(16, 10))
-    plt.scatter(np.arange(n_rights.shape[0]), n_rights / totals,
+    plt.scatter(bins[1:], n_rights / totals,
                 linewidths=totals / totals.mean(), alpha=.5)
     plt.ylabel(ylabel)
     plt.xlabel(xlabel)
@@ -374,7 +375,7 @@ def eval(batches, model, tokenizer, log_dir,
                 batch_word_acc, correct_conf, wrong_conf = batch_word_accuracy(tgt,
                                                                                predictions,
                                                                                tokenizer.pad_token,
-                                                                               aligned_confidence)
+                                                                               confidence=aligned_confidence)
                 epoch_word_acc += batch_word_acc
                 correct_confs += correct_conf
                 wrong_confs += wrong_conf
@@ -406,7 +407,7 @@ def eval(batches, model, tokenizer, log_dir,
                                                                                 [file_predictions],
                                                                                 pad=tokenizer.pad_token,
                                                                                 split=False,
-                                                                                confidence=file_confidence)
+                                                                                confidence=[file_confidence])
                         file_word_accs.append(file_word_acc)
                         file_correct_confs += file_correct_conf
                         file_wrong_confs += file_wrong_conf
@@ -475,7 +476,7 @@ def eval(batches, model, tokenizer, log_dir,
                 [file_predictions],
                 pad=tokenizer.pad_token,
                 split=False,
-                confidence=file_confidence)
+                confidence=[file_confidence])
             file_word_accs.append(file_word_acc)
             file_correct_confs += file_correct_conf
             file_wrong_confs += file_wrong_conf
@@ -948,7 +949,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
         if i >= max_length:
             break
         # sub-word -> add audio representation of the previous word
-        if tgt.startswith('##'):
+        if tgt.startswith(WP_START):
             aligned_audio[i] = aligned_audio[i-1]
         elif a is not None:
             mask[i] = False
