@@ -234,10 +234,26 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
 
 
 def mode(prediction, pad='[PAD]'):
-    """Returns most common predicted item or pad if no items were predicted"""
+    """Mode of a Counter instance
+
+    Parameters
+    ----------
+    prediction: Counter
+    pad: str, optional
+        Return value if prediction is empty
+        Defaults to '[PAD]'
+
+    Returns
+    -------
+    mode: str
+        Most common item of prediction, or pad if prediction is empty
+    confidence: float
+        Ratio of mode in prediction
+    """
     if prediction:
-        return prediction.most_common(1)[0][0]
-    return pad
+        mode, count = prediction.most_common(1)[0]
+        return mode, count/sum(prediction.values())
+    return pad, 0.
 
 
 def eval(batches, model, tokenizer, log_dir,
