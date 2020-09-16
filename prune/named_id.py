@@ -887,11 +887,12 @@ def batchify_windows(tokenizer, text_windows, target_windows, audio_windows, spe
         for j in indices[i: i + batch_size]:
             text_batch.append(text_windows[j])
             target_batch.append(target_windows[j])
-            speaker_id_batch.append(speaker_id_windows[j])
             audio_window = audio_windows[j]
             if audio_window is not None:
                 audio_batch.append(audio_window.unsqueeze(0))
                 audio_mask.append(audio_masks[j].unsqueeze(0))
+            if j < len(speaker_id_windows):
+                speaker_id_batch.append(speaker_id_windows[j])
         if len(audio_batch) != 0:
             audio_batch = cat(audio_batch, dim=0)
             audio_mask = cat(audio_mask, dim=0)
