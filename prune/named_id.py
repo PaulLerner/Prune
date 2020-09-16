@@ -354,7 +354,7 @@ def eval(batches, model, tokenizer, log_dir,
                                                                          split=False))
                         # convert hypothesis to pyannote Annotation
                         if test:
-                            hypothesis = id_to_annotation(file_predictions, timings, uri)
+                            hypothesis = id_to_annotation(file_predictions, timings, previous_uri)
 
                             # save hypothesis to rttm
                             with open(rttm_out, 'a') as file:
@@ -737,6 +737,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                     # average audio-embedding over the segment frames
                     else:
                         segment = np.mean(segment, axis=0)
+                else:
+                    segment = None
             else:
                 segment = None
                 timing = Segment()
