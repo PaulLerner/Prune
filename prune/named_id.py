@@ -726,16 +726,17 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 windows.append((start, end))
                 start = end
 
-            # get audio embedding for word if alignment timing is confident enough
-            if audio_emb is not None and word._.confidence > 0.5:
+            # get audio embedding and timing for word if forced-alignment is confident enough
+            if word._.confidence > 0.5:
                 timing = Segment(word._.time_start, word._.time_end)
-                segment = current_audio_emb.crop(timing, mode="loose")
-                # skip segments so small we don't have any embedding for it
-                if len(segment) < 1:
-                    segment = None
-                # average audio-embedding over the segment frames
-                else:
-                    segment = np.mean(segment, axis=0)
+                if audio_emb is not None:
+                    segment = current_audio_emb.crop(timing, mode="loose")
+                    # skip segments so small we don't have any embedding for it
+                    if len(segment) < 1:
+                        segment = None
+                    # average audio-embedding over the segment frames
+                    else:
+                        segment = np.mean(segment, axis=0)
             else:
                 segment = None
                 timing = Segment()
