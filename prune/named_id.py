@@ -432,14 +432,19 @@ def eval(batches, model, tokenizer, log_dir,
                     file_confidence = []
 
                 # save target and output for future file-level accuracy
-                for target_i, pred_i, speaker_id_i in zip_longest(tgt, predictions, speaker_id_batch):
+                for target_i, pred_i, speaker_id_i, conf_i in zip_longest(tgt,
+                                                                          predictions,
+                                                                          speaker_id_batch,
+                                                                          aligned_confidence):
                     target_i, pred_i = target_i.split(), pred_i.split()
                     for start, end in windows[i: i+window_size]:
                         file_target[start:end] = target_i[start-shift: end-shift]
                         if speaker_id_i is not None:
                             file_speaker_id[start:end] = speaker_id_i[start-shift: end-shift]
-                        for counter, p in zip(file_predictions[start:end], pred_i[start-shift: end-shift]):
-                            counter[p] += 1
+                        for counter, p, c in zip(file_predictions[start:end],
+                                                 pred_i[start-shift: end-shift],
+                                                 conf_i[start-shift: end-shift]):
+                            counter[p] += c
                     i += step_size
                     # shift between batch and original file
                     shift = windows[i][0]  # start
