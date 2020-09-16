@@ -93,7 +93,7 @@ from torch.optim import Adam
 from torch.nn import BCELoss, DataParallel
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
-
+from prune.convert import id_to_annotation
 
 # set random seed
 np.random.seed(0)
@@ -280,6 +280,10 @@ def eval(batches, model, tokenizer, log_dir,
             epoch = yaml.load(file, Loader=yaml.SafeLoader)["epoch"]
         weights = [weights_path/EPOCH_FORMAT.format(epoch)]
         best = 0.
+        rttm_out = log_dir/'hypothesis.rttm'
+        if rttm_out.exists():
+            raise ValueError(f"'{rttm_out}' already exists, you probably don't want "
+                             f"to append any more data to it")
     else:
         weights_path = log_dir.parents[0] / 'weights'
         weights = sorted(weights_path.iterdir(), reverse=evergreen)
@@ -302,7 +306,7 @@ def eval(batches, model, tokenizer, log_dir,
             epoch_loss, epoch_word_acc, epoch_alias_acc = 0., 0., 0.
             uris, file_token_acc, file_word_acc, file_alias_acc = [], [], [], []
             previous_uri = None
-            for uri, windows, aliases, inp, tgt, speaker_id_batch, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
+            for uri, timings, windows, aliases, inp, tgt, speaker_id_batch, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass: (batch_size, sequence_length, sequence_length)
                 output = model(input_ids, audio_batch, src_key_padding_mask, audio_mask)
                 # manage devices
@@ -331,7 +335,7 @@ def eval(batches, model, tokenizer, log_dir,
 
                 # handle file-level stuff
                 if uri != previous_uri:
-                    # compute file-level accuracy
+                    # compute file-level accuracy and save output if testing
                     if previous_uri is not None:
                         uris.append(previous_uri)
                         # merge window-level predictions
@@ -348,7 +352,13 @@ def eval(batches, model, tokenizer, log_dir,
                                                                          aliases,
                                                                          pad=tokenizer.pad_token,
                                                                          split=False))
-                        # TODO audio ER
+                        # convert hypothesis to pyannote Annotation
+                        if test:
+                            hypothesis = id_to_annotation(file_predictions, timings, uri)
+
+                            # save hypothesis to rttm
+                            with open(rttm_out, 'a') as file:
+                                hypothesis.write_rttm(file)
 
                     # reset file-level variables
                     file_length = windows[-1][-1] - windows[0][0]
@@ -406,6 +416,13 @@ def eval(batches, model, tokenizer, log_dir,
                                                              aliases,
                                                              pad=tokenizer.pad_token,
                                                              split=False))
+            # convert hypothesis to pyannote Annotation
+            if test:
+                hypothesis = id_to_annotation(file_predictions, timings, uri)
+                # save hypothesis to rttm
+                with open(rttm_out, 'a') as file:
+                    hypothesis.write_rttm(file)
+
             # average file-accuracies
             uris.append('TOTAL')
             file_word_acc.append(np.mean(file_word_acc))
@@ -521,7 +538,7 @@ def train(batches, model, tokenizer, train_dir=Path.cwd(),
         np.random.shuffle(batches)
 
         epoch_loss = 0.
-        for _, _, _, _, _, _, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
+        for _, _, _, _, _, _, _, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
             optimizer.zero_grad()
 
             # forward pass
@@ -636,20 +653,23 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
     Yields
     -------
     batch: Tuple[str, List[Tuple[int]], List[str], Tensor]:
-        (uri, windows, aliases, text_batch, target_batch, speaker_id_batch, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask)
+        (uri, timings, windows, aliases, text_batch, target_batch, speaker_id_batch, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask)
         - see batch_encode_multi.
         - uri: str,
           file-identifier of the batch and is set to None if shuffle, as batch
           are then file-heterogeneous
+        - timings: List[Segment]
+          timestamps of the input words
+          Empty if shuffling
         - windows: List[Tuple[int]]
           indices of the start and end words index of the speaker turns in the batch
-          Empty if shuffling or augmenting data
+          Empty if shuffling
         - aliases: dict
           mapping between speaker identifier and names it has been mentioned
           {str: Set[str]}
         - speaker_id_batch: List[str]
           speaker identifier (typically "firstname_lastname") as opposed to
-          target_batch which is a the speaker most common name (typically "firstname")
+          target_batch which is the speaker most common name (typically "firstname")
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
 
@@ -688,11 +708,11 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
         if audio_emb is not None:
             current_audio_emb = audio_emb(current_file)
 
-        # format transcription into 4 lists: tokens, audio, targets, speaker_ids
+        # format transcription into 5 lists: tokens, audio, targets, speaker_ids, timings
         # and segment it in speaker turns (i.e. speaker homogeneous)
         windows = []
         start, end = 0, 0
-        tokens, audio, targets, speaker_ids = [], [], [], []
+        tokens, audio, targets, speaker_ids, timings = [], [], [], [], []
         previous_speaker = None
         for word in transcription:
             if word._.speaker != previous_speaker:
@@ -701,14 +721,15 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                     tokens.append(tokenizer.sep_token)
                     targets.append(tokenizer.pad_token)
                     audio.append(None)
+                    timings.append(Segment())
                     end += 1
                 windows.append((start, end))
                 start = end
 
             # get audio embedding for word if alignment timing is confident enough
             if audio_emb is not None and word._.confidence > 0.5:
-                segment = Segment(word._.time_start, word._.time_end)
-                segment = current_audio_emb.crop(segment, mode="loose")
+                timing = Segment(word._.time_start, word._.time_end)
+                segment = current_audio_emb.crop(timing, mode="loose")
                 # skip segments so small we don't have any embedding for it
                 if len(segment) < 1:
                     segment = None
@@ -717,6 +738,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                     segment = np.mean(segment, axis=0)
             else:
                 segment = None
+                timing = Segment()
             # if we don't have a proper target we should mask the loss function
             target = mapping.get(word._.speaker, tokenizer.pad_token)
 
@@ -728,6 +750,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 targets.append(target)
                 speaker_ids.append(word._.speaker)
                 audio.append(segment)
+                timings.append(timing)
                 end += 1
 
             if proper_entity(word):
@@ -826,7 +849,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
                 if (batch[-1] == tokenizer.pad_token_id).all():
                     continue
 
-                yield (uri, windows, aliases) + batch
+                yield (uri, timings, windows, aliases) + batch
         # yield (uri, oracle_accuracy)
         elif oracle:
             alias_accuracy = None if oracle_alias_total == 0. else oracle_alias_correct/oracle_alias_total
@@ -843,7 +866,7 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None,
             # skip fully-padded batches, this might happen with unknown speakers
             if (batch[-1] == tokenizer.pad_token_id).all():
                 continue
-            yield (None, [], aliases) + batch
+            yield (None, [], [], aliases) + batch
 
 
 def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
