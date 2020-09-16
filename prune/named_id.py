@@ -282,8 +282,8 @@ def eval(batches, model, tokenizer, log_dir,
         best = 0.
         rttm_out = log_dir/'hypothesis.rttm'
         if rttm_out.exists():
-            raise ValueError(f"'{rttm_out}' already exists, you probably don't want "
-                             f"to append any more data to it")
+            raise FileExistsError(f"'{rttm_out}' already exists, you probably don't want "
+                                  f"to append any more data to it")
     else:
         weights_path = log_dir.parents[0] / 'weights'
         weights = sorted(weights_path.iterdir(), reverse=evergreen)
@@ -354,7 +354,9 @@ def eval(batches, model, tokenizer, log_dir,
                                                                          split=False))
                         # convert hypothesis to pyannote Annotation
                         if test:
-                            hypothesis = id_to_annotation(file_predictions, timings, previous_uri)
+                            hypothesis = id_to_annotation(file_predictions,
+                                                          previous_timings,
+                                                          previous_uri)
 
                             # save hypothesis to rttm
                             with open(rttm_out, 'a') as file:
@@ -399,6 +401,7 @@ def eval(batches, model, tokenizer, log_dir,
                     breakpoint()
 
                 previous_uri = uri
+                previous_timings = timings
 
             # compute file-level accuracy for the last file
             uris.append(previous_uri)
