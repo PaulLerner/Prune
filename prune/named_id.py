@@ -102,6 +102,7 @@ manual_seed(0)
 EPOCH_FORMAT = '{:04d}.tar'
 BERT = 'bert-base-cased'
 PROPN = 'PROPN'
+WP_START='##'
 
 # constant paths
 DATA_PATH = Path(PC.__file__).parent / 'data'
@@ -127,7 +128,7 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
 
 
 def batch_word_accuracy(targets: List[str], predictions: List[str],
-                        pad='[PAD]', split=True):
+                        pad='[PAD]', split=True, confidence=[[]]):
     """Computes word accuracy at the batch level
 
     Parameters
@@ -141,22 +142,31 @@ def batch_word_accuracy(targets: List[str], predictions: List[str],
     split : bool, optional
         Whether to split items in targets, predictions
         Defaults to True
+    confidence : List[List[float]]
+        Confidence of the model in it's prediction
 
     Returns
     -------
     accuracy: float
+    correct_conf, wrong_conf: List[float]
+        Confidence of the model in correct and wrong predictions, respectively.
     """
     correct, total = 0, 0
-    for target, prediction in zip(targets, predictions):
+    correct_conf, wrong_conf = [], []
+    for target, prediction, conf in zip_longest(targets, predictions, confidence, fillvalue=[]):
         if split:
             target, prediction = target.split(), prediction.split()
-        for t, p in zip_longest(target, prediction, fillvalue=pad):
+        for t, p, c in zip_longest(target, prediction, conf, fillvalue=pad):
             if t == pad:
                 continue
             if t == p:
                 correct += 1
+                if c != pad:
+                    correct_conf.append(c)
+            elif c != pad:
+                wrong_conf.append(c)
             total += 1
-    return correct/total
+    return correct/total, correct_conf, wrong_conf
 
 
 def speaker_alias_accuracy(speaker_ids: List[List[str]], predictions: List[str], aliases: dict,
@@ -218,7 +228,7 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
     i = 0
     for token in inp_eg:
         merge.append(f"{token} ({tgt_eg[i]})")
-        if not token.startswith('##'):
+        if not token.startswith(WP_START):
             i += 1
     inp_eg.append("[UNK_SPK]")
     max_len = max_length+1
@@ -232,13 +242,48 @@ def plot_output(output_eg, inp_eg, tgt_eg, save=None):
         plt.show()
     else:
         plt.savefig(save/"output.png")
+    plt.close()
+
+
+def plot_accuracy(rights, wrongs, save=None, ylabel='Accuracy', xlabel='Confidence'):
+    bins = 50
+    n_wrongs, bins, _ = plt.hist(wrongs, bins=bins)
+    n_rights, _, _ = plt.hist(rights, bins=bins)
+    totals = n_rights+n_wrongs
+    plt.close()
+    plt.figure(figsize=(16, 10))
+    plt.scatter(bins[1:], n_rights / totals,
+                linewidths=totals / totals.mean(), alpha=.5)
+    plt.ylabel(ylabel)
+    plt.xlabel(xlabel)
+    if save:
+        plt.savefig(save)
+    else:
+        plt.show()
+    plt.close()
 
 
 def mode(prediction, pad='[PAD]'):
-    """Returns most common predicted item or pad if no items were predicted"""
+    """Mode of a Counter instance
+
+    Parameters
+    ----------
+    prediction: Counter
+    pad: str, optional
+        Return value if prediction is empty
+        Defaults to '[PAD]'
+
+    Returns
+    -------
+    mode: str
+        Most common item of prediction, or pad if prediction is empty
+    confidence: float
+        Ratio of mode in prediction
+    """
     if prediction:
-        return prediction.most_common(1)[0][0]
-    return pad
+        mode, count = prediction.most_common(1)[0]
+        return mode, count/sum(prediction.values())
+    return pad, 0.
 
 
 def eval(batches, model, tokenizer, log_dir,
@@ -301,7 +346,8 @@ def eval(batches, model, tokenizer, log_dir,
         model.eval()
         with no_grad():
             epoch_loss, epoch_word_acc, epoch_alias_acc = 0., 0., 0.
-            uris, file_token_acc, file_word_acc, file_alias_acc = [], [], [], []
+            correct_confs, wrong_confs, file_correct_confs, file_wrong_confs = [], [], [], []
+            uris, file_word_accs, file_alias_accs = [], [], []
             previous_uri = None
             for uri, windows, aliases, inp, tgt, speaker_id_batch, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
                 # forward pass: (batch_size, sequence_length, sequence_length)
@@ -311,15 +357,30 @@ def eval(batches, model, tokenizer, log_dir,
 
                 # get model prediction per token: (batch_size, sequence_length)
                 # trim output to max_length to discard unknown speakers and get output w.r.t. input
-                relative_out = argmax(output[:, :, :max_length], dim=2)
+                confidence, relative_out = output[:, :, :max_length].max(dim=2)
                 # retrieve token ids from input (batch_size, sequence_length) and manage device
                 prediction_ids = zeros_like(input_ids, device=output.device)
                 for j, (input_window_id, relative_window_out) in enumerate(zip(input_ids, relative_out)):
                     prediction_ids[j] = input_window_id[relative_window_out]
 
                 # decode and compute word accuracy
-                predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
-                epoch_word_acc += batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
+                predictions, aligned_confidence = [], []
+                for j, prediction_id in enumerate(prediction_ids):
+                    aligned_confidence_j = []
+                    tokens = tokenizer.convert_ids_to_tokens(prediction_id)
+                    for k, token in enumerate(tokens):
+                        # filter out sub-words
+                        if not token.startswith(WP_START):
+                            aligned_confidence_j.append(confidence[j, k].item())
+                    aligned_confidence.append(aligned_confidence_j)
+                    predictions.append(tokenizer.convert_tokens_to_string(tokens))
+                batch_word_acc, correct_conf, wrong_conf = batch_word_accuracy(tgt,
+                                                                               predictions,
+                                                                               tokenizer.pad_token,
+                                                                               confidence=aligned_confidence)
+                epoch_word_acc += batch_word_acc
+                correct_confs += correct_conf
+                wrong_confs += wrong_conf
 
                 # compute alias accuracy
                 if aliases:
@@ -337,19 +398,29 @@ def eval(batches, model, tokenizer, log_dir,
                     if previous_uri is not None:
                         uris.append(previous_uri)
                         # merge window-level predictions
-                        file_predictions = [mode(p, tokenizer.pad_token) for p in file_predictions]
+                        tmp, file_predictions = file_predictions, []
+                        for p in tmp:
+                            m, c = mode(p, tokenizer.pad_token)
+                            file_predictions.append(m)
+                            file_confidence.append(c)
                         # compute word accuracy
-                        file_word_acc.append(batch_word_accuracy([file_target],
-                                                                 [file_predictions],
-                                                                 pad=tokenizer.pad_token,
-                                                                 split=False))
+                        file_word_acc, file_correct_conf, file_wrong_conf = batch_word_accuracy(
+                                                                                [file_target],
+                                                                                [file_predictions],
+                                                                                pad=tokenizer.pad_token,
+                                                                                split=False,
+                                                                                confidence=[file_confidence])
+                        file_word_accs.append(file_word_acc)
+                        file_correct_confs += file_correct_conf
+                        file_wrong_confs += file_wrong_conf
+
                         # compute speaker alias accuracy
                         if aliases:
-                            file_alias_acc.append(speaker_alias_accuracy([file_speaker_id],
-                                                                         [file_predictions],
-                                                                         aliases,
-                                                                         pad=tokenizer.pad_token,
-                                                                         split=False))
+                            file_alias_accs.append(speaker_alias_accuracy([file_speaker_id],
+                                                                          [file_predictions],
+                                                                          aliases,
+                                                                          pad=tokenizer.pad_token,
+                                                                          split=False))
                         # TODO audio ER
 
                     # reset file-level variables
@@ -358,6 +429,7 @@ def eval(batches, model, tokenizer, log_dir,
                     file_target = [tokenizer.pad_token] * file_length
                     file_speaker_id = [tokenizer.pad_token] * file_length
                     file_predictions = [Counter() for _ in range(file_length)]
+                    file_confidence = []
 
                 # save target and output for future file-level accuracy
                 for target_i, pred_i, speaker_id_i in zip_longest(tgt, predictions, speaker_id_batch):
@@ -395,27 +467,36 @@ def eval(batches, model, tokenizer, log_dir,
             # compute file-level accuracy for the last file
             uris.append(previous_uri)
             # merge window-level predictions
-            file_predictions = [mode(p, tokenizer.pad_token) for p in file_predictions]
+            tmp, file_predictions = file_predictions, []
+            for p in tmp:
+                m, c = mode(p, tokenizer.pad_token)
+                file_predictions.append(m)
+                file_confidence.append(c)
             # compute word accuracy
-            file_word_acc.append(batch_word_accuracy([file_target],
-                                                     [file_predictions],
-                                                     pad=tokenizer.pad_token,
-                                                     split=False))
+            file_word_acc, file_correct_conf, file_wrong_conf = batch_word_accuracy(
+                [file_target],
+                [file_predictions],
+                pad=tokenizer.pad_token,
+                split=False,
+                confidence=[file_confidence])
+            file_word_accs.append(file_word_acc)
+            file_correct_confs += file_correct_conf
+            file_wrong_confs += file_wrong_conf
             # compute speaker alias accuracy
             if aliases:
-                file_alias_acc.append(speaker_alias_accuracy([file_speaker_id],
-                                                             [file_predictions],
-                                                             aliases,
-                                                             pad=tokenizer.pad_token,
-                                                             split=False))
+                file_alias_accs.append(speaker_alias_accuracy([file_speaker_id],
+                                                              [file_predictions],
+                                                              aliases,
+                                                              pad=tokenizer.pad_token,
+                                                              split=False))
             # average file-accuracies
             uris.append('TOTAL')
-            file_word_acc.append(np.mean(file_word_acc))
-            if file_alias_acc:
-                file_alias_acc.append(np.mean(file_alias_acc))
+            file_word_accs.append(np.mean(file_word_accs))
+            if file_alias_accs:
+                file_alias_accs.append(np.mean(file_alias_accs))
 
             # log tensorboard
-            tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
+            tb.add_scalar('Accuracy/eval/file/word', file_word_accs[-1], epoch)
             epoch_loss /= len(batches)
             tb.add_scalar('Loss/eval', epoch_loss, epoch)
             epoch_word_acc /= len(batches)
@@ -424,11 +505,12 @@ def eval(batches, model, tokenizer, log_dir,
             tb.add_scalar('Accuracy/eval/batch/speaker_alias', epoch_alias_acc, epoch)
 
             # format file-accuracies in % with .2f
-            file_word_acc = [format_acc(acc) for acc in file_word_acc]
-            file_alias_acc = [format_acc(acc) for acc in file_alias_acc]
+            file_word_accs = [format_acc(acc) for acc in file_word_accs]
+            file_alias_accs = [format_acc(acc) for acc in file_alias_accs]
 
-            # print and write metrics
+            # write metrics and visualize
             if test:
+                # print and write metrics
                 epoch_alias_acc = format_acc(epoch_alias_acc) if aliases else "-"
                 metrics = {
                     'Loss/eval': [epoch_loss],
@@ -436,13 +518,21 @@ def eval(batches, model, tokenizer, log_dir,
                     'Accuracy/eval/batch/speaker_alias': [epoch_alias_acc]
                 }
                 metrics = tabulate(metrics, headers='keys', tablefmt='latex', disable_numparse=True)
-                metrics += tabulate(zip_longest(uris, file_word_acc, file_alias_acc, fillvalue='-'),
+                metrics += tabulate(zip_longest(uris, file_word_accs, file_alias_accs, fillvalue='-'),
                                     headers=['uri', 'word-level', 'alias'],
                                     tablefmt='latex',
                                     disable_numparse=True)
                 print(metrics)
                 with open(log_dir / 'eval', 'w') as file:
                     file.write(metrics)
+
+                # visualize accuracy w.r.t window-level confidence
+                plot_accuracy(correct_confs, wrong_confs,
+                              log_dir/"accuracy_wrt_window_confidence.png")
+                # visualize accuracy w.r.t file-level confidence (in majority voting)
+                plot_accuracy(file_correct_confs, file_wrong_confs,
+                              log_dir/"accuracy_wrt_file_majority_vote_confidence.png")
+
             # dump best metrics
             elif epoch_word_acc > best:
                 best = epoch_word_acc
@@ -860,7 +950,7 @@ def align_audio_targets(tokenizer, audio_window, target_window, audio_emb=None):
         if i >= max_length:
             break
         # sub-word -> add audio representation of the previous word
-        if tgt.startswith('##'):
+        if tgt.startswith(WP_START):
             aligned_audio[i] = aligned_audio[i-1]
         elif a is not None:
             mask[i] = False
