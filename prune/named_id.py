@@ -268,7 +268,7 @@ def mode(prediction, pad='[PAD]'):
 
     Parameters
     ----------
-    prediction: Counter
+    prediction: dict[int, Counter]
     pad: str, optional
         Return value if prediction is empty
         Defaults to '[PAD]'
@@ -280,9 +280,9 @@ def mode(prediction, pad='[PAD]'):
     confidence: float
         Ratio of mode in prediction
     """
-    if prediction:
-        mode, count = prediction.most_common(1)[0]
-        return mode, count/sum(prediction.values())
+    if prediction['scores']:
+        mode, count = prediction['scores'].most_common(1)[0]
+        return mode, count/prediction['total']
     return pad, 0.
 
 
@@ -428,7 +428,7 @@ def eval(batches, model, tokenizer, log_dir,
                     i, shift = 0, 0
                     file_target = [tokenizer.pad_token] * file_length
                     file_speaker_id = [tokenizer.pad_token] * file_length
-                    file_predictions = [Counter() for _ in range(file_length)]
+                    file_predictions = [{'total': 0, 'scores': Counter()} for _ in range(file_length)]
                     file_confidence = []
 
                 # save target and output for future file-level accuracy
@@ -444,7 +444,8 @@ def eval(batches, model, tokenizer, log_dir,
                         for counter, p, c in zip(file_predictions[start:end],
                                                  pred_i[start-shift: end-shift],
                                                  conf_i[start-shift: end-shift]):
-                            counter[p] += c
+                            counter['scores'][p] += c
+                            counter['total'] += 1
                     i += step_size
                     # shift between batch and original file
                     shift = windows[i][0]  # start
