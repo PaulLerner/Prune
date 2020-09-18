@@ -828,18 +828,20 @@ def augment_window(uri=None, speaker_turn_window=None, aliases=None, text_window
     for _ in range(abs(augment)):
         # copy original sample
         synthetic_text_id, synthetic_target_id = text_id_window.copy(), target_id_window.copy()
-        # pick random name
-        i = np.random.randint(0, len(names))
-        random_name = names[i]
         # iterate over unique targets (str)
         for target in np.unique(target_window):
+            # skip padded targets
+            if target == tokenizer.pad_token:
+                continue
+            # pick random name
+            i = np.random.randint(0, len(names))
+            random_name = names[i]
             # replace in text (ids)
             for j in (text_window == target).nonzero()[0]:
                 synthetic_text_id[j] = random_name
             # replace in targets (ids)
             for j in (target_window == target).nonzero()[0]:
                 synthetic_target_id[j] = random_name
-
         yield dict(uri=uri, speaker_turn_window=speaker_turn_window, aliases=aliases,
                    text_window=text_window, target_window=target_window,
                    text_id_window=synthetic_text_id, target_id_window=synthetic_target_id,
