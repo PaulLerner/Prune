@@ -461,10 +461,8 @@ def reduce_loss(loss, tgt_key_padding_mask):
     return loss[tgt_key_padding_mask.bool()].mean()
 
 
-def get_tensors(uri=None, speaker_turn_window=None, aliases=None, text_window=None, target_window=None,
-                text_id_window=None, target_id_window=None,
-                speaker_id_window=None, audio_window=None, audio_mask_window=None,
-                src_key_padding_mask=None, tgt_key_padding_mask=None):
+def get_tensors(text_id_window=None, target_id_window=None, audio_window=None, audio_mask_window=None,
+                src_key_padding_mask=None, tgt_key_padding_mask=None, **kwargs):
     """
     Returns a tuple:
     ---------------
@@ -476,6 +474,8 @@ def get_tensors(uri=None, speaker_turn_window=None, aliases=None, text_window=No
     tgt_key_padding_mask
 
     See batchify
+
+    Additional parameters **kwargs are not used
     """
     return text_id_window, target_id_window, audio_window, audio_mask_window, src_key_padding_mask, tgt_key_padding_mask
 
