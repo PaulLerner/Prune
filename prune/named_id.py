@@ -132,13 +132,14 @@ def token_accuracy(targets: Tensor, predictions: Tensor, pad: int=0):
     return where[0].shape[0] / indices.nonzero(as_tuple=True)[0].shape[0]
 
 
-def batch_word_accuracy(targets: List[str], predictions: List[str],
+def batch_word_accuracy(targets: List[np.ndarray], predictions: List[str],
                         pad='[PAD]', split=True):
     """Computes word accuracy at the batch level
 
     Parameters
     ----------
-    targets, predictions:
+    targets: List[np.ndarray[str]]
+    predictions:
         - List[str] if split
         - List[List[str]] otherwise
     pad: str, optional
@@ -155,7 +156,7 @@ def batch_word_accuracy(targets: List[str], predictions: List[str],
     correct, total = 0, 0
     for target, prediction in zip(targets, predictions):
         if split:
-            target, prediction = target.split(), prediction.split()
+            prediction = prediction.split()
         for t, p in zip_longest(target, prediction, fillvalue=pad):
             if t == pad:
                 continue
@@ -246,14 +247,15 @@ def mode(prediction, pad='[PAD]'):
     return pad
 
 
-def eval(batches, model, tokenizer, log_dir,
+def eval(batches_parameters, model, tokenizer, log_dir,
          test=False, evergreen=False, interactive=False, step_size=1, window_size=10):
     """Load model from checkpoint and evaluate it on batches.
     When testing, only the best model should be tested.
 
     Parameters
     ----------
-    batches: see batchify
+    batches_parameters: dict
+        should be passed to batchify(**batches_parameters)
     model: SidNet
         instance of SidNet, ready to be loaded
     tokenizer: BertTokenizer
@@ -279,7 +281,6 @@ def eval(batches, model, tokenizer, log_dir,
         Number of speaker turns in one window
         Defaults to 10.
     """
-    raise NotImplementedError("eval")
     params_file = log_dir.parent / 'params.yml'
     if test:
         weights_path = log_dir.parents[1] / 'weights'
@@ -295,6 +296,8 @@ def eval(batches, model, tokenizer, log_dir,
                 best = yaml.load(file, Loader=yaml.SafeLoader)["accuracy"]
         else:
             best = 0.
+    # load batches before-hand since we shouldn't need augmentation (make this optional to ease on the RAM ?)
+    batches = list(tqdm(batchify(**batches_parameters), desc='Loading batches'))
 
     criterion = BCELoss(reduction='none')
     tb = SummaryWriter(log_dir)
@@ -309,30 +312,36 @@ def eval(batches, model, tokenizer, log_dir,
             epoch_loss, epoch_word_acc, epoch_alias_acc = 0., 0., 0.
             uris, file_token_acc, file_word_acc, file_alias_acc = [], [], [], []
             previous_uri = None
-            for uri, speaker_turns, aliases, inp, tgt, speaker_id_batch, audio_batch, audio_mask, input_ids, target_ids, src_key_padding_mask, tgt_key_padding_mask in batches:
+            for batch in batches:
+                # unpack tensors from batch
+                text_id_window, target_id_window, audio_window, audio_mask_window, src_key_padding_mask, tgt_key_padding_mask = \
+                    get_tensors(**batch)
+                # unpack text from batch
+                uri, speaker_turns, aliases, text_window, target_window, speaker_id_window = get_text(**batch)
+
                 # forward pass: (batch_size, sequence_length, sequence_length)
-                output = model(input_ids, audio_batch, src_key_padding_mask, audio_mask)
+                output = model(text_id_window, audio_window, src_key_padding_mask, audio_mask_window)
                 # manage devices
-                target_ids = target_ids.to(output.device)
+                target_id_window = target_id_window.to(output.device)
 
                 # get model prediction per token: (batch_size, sequence_length)
                 relative_out = argmax(output, dim=2)
                 # retrieve token ids from input (batch_size, sequence_length) and manage device
-                prediction_ids = zeros_like(input_ids, device=output.device)
-                for j, (input_window_id, relative_window_out) in enumerate(zip(input_ids, relative_out)):
+                prediction_ids = zeros_like(text_id_window, device=output.device)
+                for j, (input_window_id, relative_window_out) in enumerate(zip(text_id_window, relative_out)):
                     prediction_ids[j] = input_window_id[relative_window_out]
 
                 # decode and compute word accuracy
                 predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
-                epoch_word_acc += batch_word_accuracy(tgt, predictions, tokenizer.pad_token)
+                epoch_word_acc += batch_word_accuracy(target_window, predictions, tokenizer.pad_token)
 
                 # compute alias accuracy
                 if aliases:
-                    epoch_alias_acc += speaker_alias_accuracy(speaker_id_batch, predictions, aliases,
+                    epoch_alias_acc += speaker_alias_accuracy(speaker_id_window, predictions, aliases,
                                                               pad=tokenizer.pad_token)
 
                 # calculate loss
-                loss = criterion(output, target_ids)
+                loss = criterion(output, target_id_window)
                 loss = reduce_loss(loss, tgt_key_padding_mask)
                 epoch_loss += loss.item()
 
@@ -358,33 +367,38 @@ def eval(batches, model, tokenizer, log_dir,
                         # TODO audio ER
 
                     # reset file-level variables
-                    file_length = speaker_turns[-1][-1] - speaker_turns[0][0]
-                    i, shift = 0, 0
-                    file_target = [tokenizer.pad_token] * file_length
-                    file_speaker_id = [tokenizer.pad_token] * file_length
-                    file_predictions = [Counter() for _ in range(file_length)]
+                    shift = 0
+                    file_target, file_speaker_id, file_predictions = [], [], []
 
+                i = 0
                 # save target and output for future file-level accuracy
-                for target_i, pred_i, speaker_id_i in zip_longest(tgt, predictions, speaker_id_batch):
-                    target_i, pred_i = target_i.split(), pred_i.split()
-                    for start, end in speaker_turns[i: i+window_size]:
-                        file_target[start:end] = target_i[start-shift: end-shift]
+                for target_i, pred_i, speaker_id_i, speaker_turn_i in zip_longest(target_window,
+                                                                                  predictions,
+                                                                                  speaker_id_window,
+                                                                                  speaker_turns):
+                    pred_i = pred_i.split()
+                    target_i = list(target_i)
+                    for start, end in speaker_turn_i:
+                        if len(file_target) < end:
+                            file_target += target_i[start-shift: end-shift]
                         if speaker_id_i is not None:
-                            file_speaker_id[start:end] = speaker_id_i[start-shift: end-shift]
-                        for counter, p in zip(file_predictions[start:end], pred_i[start-shift: end-shift]):
-                            counter[p] += 1
-                    i += step_size
+                            if len(file_speaker_id) < end:
+                                file_speaker_id += speaker_id_i[start-shift: end-shift]
+                        for j, p in enumerate(pred_i[start-shift: end-shift]):
+                            if len(file_predictions) < start+j+1:
+                                file_predictions.append(Counter({p: 1}))
+                            else:
+                                file_predictions[start+j][p] += 1
                     # shift between batch and original file
-                    shift = speaker_turns[i][0]  # start
-
+                    shift = speaker_turn_i[i][0]  # start
+                    i += step_size
                 if interactive:
-                    eg = np.random.randint(len(tgt))
-                    inp_eg, tgt_eg, pred_eg = inp[eg], tgt[eg], predictions[eg]
+                    eg = np.random.randint(len(target_window))
+                    inp_eg, tgt_eg, pred_eg = text_window[eg], target_window[eg], predictions[eg]
                     # print random example
-                    print(str_example(inp_eg.split(), tgt_eg.split(), pred_eg.split()))
+                    print(str_example(inp_eg, tgt_eg, pred_eg.split()))
                     # plot model output
-                    plot_output(output[eg], tokenizer.tokenize(inp_eg), 
-                                tgt_eg.split(), log_dir)
+                    plot_output(output[eg], tokenizer.tokenize(inp_eg), tgt_eg, log_dir)
 
                     # print current metrics
                     metrics = {
@@ -478,6 +492,11 @@ def get_tensors(text_id_window=None, target_id_window=None, audio_window=None, a
     Additional parameters **kwargs are not used
     """
     return text_id_window, target_id_window, audio_window, audio_mask_window, src_key_padding_mask, tgt_key_padding_mask
+
+
+def get_text(uri=None, speaker_turn_window=None, aliases=None,
+             text_window=None, target_window=None, speaker_id_window=None, **kwargs):
+    return uri, speaker_turn_window, aliases, text_window, target_window, speaker_id_window
 
 
 def train(batches_parameters, model, tokenizer, train_dir=Path.cwd(),
@@ -867,7 +886,7 @@ def handle_augmentation(tokenizer, protocol, mapping, subset='train', audio_emb=
     """
     arguments = {
         'tokenizer': BERT,
-        'protocol': protocol_name,
+        'protocol': f'{protocol_name}.{subset}',
         'audio': bool(audio_emb),
         'window_size': window_size,
         'step_size': step_size,
@@ -880,6 +899,7 @@ def handle_augmentation(tokenizer, protocol, mapping, subset='train', audio_emb=
     save_synthetic_names = save / f'synthetic_names_{"uniform" if uniform else "weighted"}.pickle'
 
     # load list of names (either from save_synthetic_names or CHARACTERS_PATH)
+    names = None
     if augment != 0:
         if save_synthetic_names.exists():
             with open(save_synthetic_names, 'rb') as file:
@@ -1022,9 +1042,8 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None, batch
     """
     assert not tokenizer.do_basic_tokenize, "Basic tokenization is handle beforehand"
     warn_deprecated([(mask, 'mask'), (sep_change, 'sep_change')])
-    if not shuffle:
-        raise NotImplementedError("only shuffle is implemented for now")
     batch_save = []
+    previous_uri = None
     # split windows in batches
     for window in handle_augmentation(tokenizer, protocol, mapping, subset, audio_emb, batch_size,
                                       window_size, step_size, mask, easy, sep_change,
@@ -1032,9 +1051,18 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None, batch
         # reshape text and targets and align audio with text
         window = reshape_window(tokenizer, **window)
         # discard fully-padded when training (i.e. shuffling)
+        # (when testing some targets may be available via speaker_id_window)
         if shuffle and not window["tgt_key_padding_mask"].bool().any():
             continue
+        uri = window['uri']
+        # when not shuffling: yield uri-homogeneous batches (i.e. of the same file)
+        # even if batch-size is lesser than the requested batch_size
+        if not shuffle and previous_uri is not None and uri != previous_uri:
+            yield cat_window(batch_save)
+            batch_save = []
         batch_save.append(window)
+        previous_uri = uri
+        # yield batch of size batch_size
         if len(batch_save) >= batch_size:
             yield cat_window(batch_save)
             batch_save = []
@@ -1044,14 +1072,33 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None, batch
 
 
 def cat_window(batch_save):
+    """Concatenate a list of windows (see reshape_window) into a single batch:
+    - Tensors are concatenated to a single tensor along the first dimension
+    - Lists and np arrays are concatenated in lists
+    - Only one value of str (uri), dict (aliases) or NoneType (maybe audio) is kept arbitrarily.
+
+    Returns
+    -------
+    batch: dict
+        See batchify
+    """
     batch = {}
     for w in batch_save:
         for key, value in w.items():
             if isinstance(value, Tensor):
                 batch.setdefault(key, [])
                 batch[key].append(value.unsqueeze(0))
+            elif isinstance(value, (np.ndarray, list)):
+                batch.setdefault(key, [])
+                batch[key].append(value)
+            elif isinstance(value, (str, dict)) or value is None:
+                batch[key] = value
+            else:
+                raise TypeError(f"Unexpected type in window: '{type(value)}'.\n From '{key}': {value}")
+
     for key, value in batch.items():
-        batch[key] = cat(value, dim=0)
+        if isinstance(value, list) and isinstance(value[0], Tensor):
+            batch[key] = cat(value, dim=0)
     return batch
 
 
@@ -1279,7 +1326,7 @@ if __name__ == '__main__':
         batches_parameters = dict(tokenizer=tokenizer, protocol=protocol, mapping=mapping, subset=subset,
                                   audio_emb=audio, batch_size=batch_size, window_size=window_size, step_size=step_size,
                                   mask=mask, easy=easy, sep_change=sep_change, augment=augment, uniform=uniform,
-                                  shuffle=True, save=save)
+                                  shuffle=False, save=save)
         eval(batches_parameters, model, tokenizer, validate_dir,
              test=False, evergreen=evergreen, interactive=interactive,
              step_size=step_size, window_size=window_size)
@@ -1300,7 +1347,7 @@ if __name__ == '__main__':
         batches_parameters = dict(tokenizer=tokenizer, protocol=protocol, mapping=mapping, subset=subset,
                                   audio_emb=audio, batch_size=batch_size, window_size=window_size, step_size=step_size,
                                   mask=mask, easy=easy, sep_change=sep_change, augment=augment, uniform=uniform,
-                                  shuffle=True, save=save)
+                                  shuffle=False, save=save)
 
         eval(batches_parameters, model, tokenizer, test_dir,
              test=True, interactive=interactive,
