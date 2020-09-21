@@ -875,6 +875,7 @@ def handle_augmentation(tokenizer, protocol, mapping, subset='train', audio_emb=
     }
     arguments_str = ','.join(['_'.join(map(str, item))
                               for item in sorted(arguments.items())])
+    save.mkdir(exist_ok=True)
     save_windows = save / arguments_str
     save_synthetic_names = save / f'synthetic_names_{"uniform" if uniform else "weighted"}.pickle'
 
@@ -888,12 +889,12 @@ def handle_augmentation(tokenizer, protocol, mapping, subset='train', audio_emb=
             for character_file in CHARACTERS_PATH:
                 with open(character_file) as file:
                     for line in file.read().split("\n"):
-                        if line == '':
-                            continue
-                        name = line.split(',')[3].split()[0]
-                        names += [encode(name, tokenizer)]
+                        if line != '':
+                            names.append(line.split(',')[3].split()[0])
             if uniform:
-                names = list(set(names))
+                names = set(names)
+            # encode name afterwards to be able to convert to set if uniform
+            names = [encode(name, tokenizer) for name in names]
             with open(save_synthetic_names, 'wb') as file:
                 pickle.dump(names, file)
 
