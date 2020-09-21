@@ -87,7 +87,7 @@ from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
 
 from torch import load, manual_seed, no_grad, argmax, Tensor, zeros, from_numpy, \
-    zeros_like, LongTensor, ones, float, cat, BoolTensor
+    zeros_like, LongTensor, ones, float, cat, BoolTensor, isnan
 from torch import save as torch_save
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils import clip_grad_norm_
@@ -163,6 +163,8 @@ def batch_word_accuracy(targets: List[np.ndarray], predictions: List[str],
             if t == p:
                 correct += 1
             total += 1
+    if total == 0:
+        return None
     return correct/total
 
 
@@ -309,7 +311,7 @@ def eval(batches_parameters, model, tokenizer, log_dir,
         model.module.to(model.src_device_obj)
         model.eval()
         with no_grad():
-            epoch_loss, epoch_word_acc, epoch_alias_acc = 0., 0., 0.
+            epoch_loss, epoch_word_acc, epoch_alias_acc = [], [], 0.
             uris, file_token_acc, file_word_acc, file_alias_acc = [], [], [], []
             previous_uri = None
             for batch in batches:
@@ -333,7 +335,10 @@ def eval(batches_parameters, model, tokenizer, log_dir,
 
                 # decode and compute word accuracy
                 predictions = tokenizer.batch_decode(prediction_ids, clean_up_tokenization_spaces=False)
-                epoch_word_acc += batch_word_accuracy(target_window, predictions, tokenizer.pad_token)
+                batch_word_acc = batch_word_accuracy(target_window, predictions, tokenizer.pad_token)
+                # handle fully-padded batches
+                if batch_word_acc is not None:
+                    epoch_word_acc.append(batch_word_acc)
 
                 # compute alias accuracy
                 if aliases:
@@ -343,7 +348,9 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                 # calculate loss
                 loss = criterion(output, target_id_window)
                 loss = reduce_loss(loss, tgt_key_padding_mask)
-                epoch_loss += loss.item()
+                # handle fully-padded batches
+                if not isnan(loss):
+                    epoch_loss.append(loss.item())
 
                 # handle file-level stuff
                 if uri != previous_uri:
@@ -402,8 +409,8 @@ def eval(batches_parameters, model, tokenizer, log_dir,
 
                     # print current metrics
                     metrics = {
-                        'Loss/eval': [epoch_loss],
-                        'Accuracy/eval/batch/word': [format_acc(epoch_word_acc)],
+                        'Loss/eval': [np.mean(epoch_loss)],
+                        'Accuracy/eval/batch/word': [format_acc(np.mean(epoch_word_acc))],
                         'Accuracy/eval/batch/speaker_alias': [format_acc(epoch_alias_acc)]
                     }
                     print(tabulate(metrics, headers='keys', disable_numparse=True))
@@ -435,9 +442,9 @@ def eval(batches_parameters, model, tokenizer, log_dir,
 
             # log tensorboard
             tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
-            epoch_loss /= len(batches)
+            epoch_loss = np.mean(epoch_loss)
             tb.add_scalar('Loss/eval', epoch_loss, epoch)
-            epoch_word_acc /= len(batches)
+            epoch_word_acc = np.mean(epoch_word_acc)
             tb.add_scalar('Accuracy/eval/batch/word', epoch_word_acc, epoch)
             epoch_alias_acc /= len(batches)
             tb.add_scalar('Accuracy/eval/batch/speaker_alias', epoch_alias_acc, epoch)
@@ -1051,13 +1058,12 @@ def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None, batch
         # reshape text and targets and align audio with text
         window = reshape_window(tokenizer, **window)
         # discard fully-padded when training (i.e. shuffling)
-        # (when testing some targets may be available via speaker_id_window)
         if shuffle and not window["tgt_key_padding_mask"].bool().any():
             continue
         uri = window['uri']
         # when not shuffling: yield uri-homogeneous batches (i.e. of the same file)
         # even if batch-size is lesser than the requested batch_size
-        if not shuffle and previous_uri is not None and uri != previous_uri:
+        if not shuffle and previous_uri is not None and uri != previous_uri and len(batch_save) != 0:
             yield cat_window(batch_save)
             batch_save = []
         batch_save.append(window)
