@@ -29,7 +29,7 @@ def rm_weights(train_dir):
     if answer.lower() != 'y':
         return []
     for weight in todo:
-        weight.unlink(missing_ok=True)
+        weight.unlink()
 
 
 if __name__ == '__main__':
