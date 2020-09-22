@@ -1160,6 +1160,7 @@ def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, 
         aligned_audio_mask = ones(max_length, dtype=bool)
     else:
         aligned_audio = None
+        aligned_audio_mask = None
     # align audio with text word-pieces, flatten text word-pieces and add special tokens [CLS] and [SEP]
     j = 1
     for i, text in enumerate(text_id_window):
