@@ -1156,7 +1156,7 @@ def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, 
     cls_token_id, sep_token_id = LongTensor([tokenizer.cls_token_id]), LongTensor([tokenizer.sep_token_id])
     flat_text = []
     if audio_window is not None:
-        aligned_audio = zeros((max_length, ) + audio_window.shape[0], dtype=float)
+        aligned_audio = zeros((max_length, audio_window.shape[1]), dtype=float)
         aligned_audio_mask = ones(max_length, dtype=bool)
     else:
         aligned_audio = None
@@ -1164,7 +1164,7 @@ def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, 
     j = 1
     for i, text in enumerate(text_id_window):
         if aligned_audio is not None:
-            aligned_audio[j: j+text.shape[1]] = audio_window[i].unsqueeze(1)
+            aligned_audio[j: j+text.shape[1]] = audio_window[i].unsqueeze(0)
             aligned_audio_mask[j: j+text.shape[1]] = audio_mask_window[i]
         flat_text.append(text.reshape(-1))
         j += text.shape[1]
@@ -1201,7 +1201,7 @@ def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, 
     return dict(uri=uri, speaker_turn_window=speaker_turn_window, aliases=aliases,
                 text_window=text_window, target_window=target_window,
                 text_id_window=flat_text, target_id_window=relative_targets,
-                speaker_id_window=speaker_id_window, audio_window=audio_window, audio_mask_window=audio_mask_window,
+                speaker_id_window=speaker_id_window, audio_window=aligned_audio, audio_mask_window=aligned_audio_mask,
                 src_key_padding_mask=src_key_padding_mask, tgt_key_padding_mask=tgt_key_padding_mask)
 
 
