@@ -377,12 +377,14 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                     shift = 0
                     file_target, file_speaker_id, file_predictions = [], [], []
 
-                i = 0
                 # save target and output for future file-level accuracy
                 for target_i, pred_i, speaker_id_i, speaker_turn_i in zip_longest(target_window,
                                                                                   predictions,
                                                                                   speaker_id_window,
                                                                                   speaker_turns):
+                    # shift between batch and original file
+                    shift = speaker_turn_i[0][0]  # start
+
                     pred_i = pred_i.split()
                     target_i = list(target_i)
                     for start, end in speaker_turn_i:
@@ -396,9 +398,6 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                                 file_predictions.append(Counter({p: 1}))
                             else:
                                 file_predictions[start+j][p] += 1
-                    # shift between batch and original file
-                    shift = speaker_turn_i[i][0]  # start
-                    i += step_size
                 if interactive:
                     eg = np.random.randint(len(target_window))
                     inp_eg, tgt_eg, pred_eg = text_window[eg], target_window[eg], predictions[eg]
