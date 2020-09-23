@@ -446,10 +446,8 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                         # TODO audio ER
 
                     # reset file-level variables
-                    shift = 0
                     file_target, file_speaker_id, file_predictions, file_confidence = [], [], []
 
-                i = 0
                 # save target and output for future file-level accuracy
                 for target_i, pred_i, speaker_id_i, speaker_turn_i, conf_i in zip_longest(
                                                                                   target_window,
@@ -457,6 +455,9 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                                                                                   speaker_id_window,
                                                                                   speaker_turns,
                                                                                   aligned_confidence):
+                    # shift between batch and original file
+                    shift = speaker_turn_i[0][0]  # start
+
                     pred_i = pred_i.split()
                     target_i = list(target_i)
                     for start, end in speaker_turn_i:
@@ -475,9 +476,6 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                             else:
                                 file_predictions[start+j]['scores'][p] += c
                                 file_predictions[start + j]['total'] += 1
-                    # shift between batch and original file
-                    shift = speaker_turn_i[i][0]  # start
-                    i += step_size
                 if interactive:
                     eg = np.random.randint(len(target_window))
                     inp_eg, tgt_eg, pred_eg = text_window[eg], target_window[eg], predictions[eg]
