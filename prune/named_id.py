@@ -837,15 +837,17 @@ def save_load_windows(save_windows, shuffle, protocol, subset, *args, **kwargs):
                 yield window
 
 
-def augment_window(uri=None, speaker_turn_window=None, aliases=None, text_window=None, target_window=None,
-                   text_id_window=None, target_id_window=None,
-                   speaker_id_window=None, audio_window=None, audio_mask_window=None, augment=None, names=None):
+def augment_window(text_window=None, target_window=None, text_id_window=None,
+                   target_id_window=None, augment=None, names=None, **kwargs):
     """
-    Augment data by replacing target names in text_window and target_window by a synthetic name from names
+    Augment data by replacing target names in text_window and target_window
+    by a synthetic name from names
 
     Parameters
     ----------
     See batchify and format_transcription
+
+    **kwargs: additional parameters are kept unchanged in the window
 
     Returns
     -------
@@ -868,10 +870,8 @@ def augment_window(uri=None, speaker_turn_window=None, aliases=None, text_window
             # replace in targets (ids)
             for j in (target_window == target).nonzero()[0]:
                 synthetic_target_id[j] = random_name
-        yield dict(uri=uri, speaker_turn_window=speaker_turn_window, aliases=aliases,
-                   text_window=text_window, target_window=target_window,
-                   text_id_window=synthetic_text_id, target_id_window=synthetic_target_id,
-                   speaker_id_window=speaker_id_window, audio_window=audio_window, audio_mask_window=audio_mask_window)
+        yield dict(**kwargs, text_window=text_window, target_window=target_window,
+                   text_id_window=synthetic_text_id, target_id_window=synthetic_target_id)
 
 
 def handle_augmentation(tokenizer, protocol, mapping, subset='train', audio_emb=None, batch_size=128,
@@ -1108,9 +1108,8 @@ def cat_window(batch_save):
     return batch
 
 
-def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, text_window=None, target_window=None,
-                   text_id_window=None, target_id_window=None,
-                   speaker_id_window=None, audio_window=None, audio_mask_window=None):
+def reshape_window(tokenizer, text_id_window=None, target_id_window=None,
+                   audio_window=None, audio_mask_window=None, **kwargs):
     """
     1. reshape text and targets to -1 and align audio with text
     2. add [CLS] and [SEP] tokens at the start-end of each text window
@@ -1120,6 +1119,8 @@ def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, 
     Parameters
     ----------
     See format_transcription output
+
+    **kwargs: additional parameters are kept in the window unchanged
 
     Returns
     -------
@@ -1151,6 +1152,11 @@ def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, 
         tgt_key_padding_mask, Tensor[max_length]
             see BertTokenizer.batch_encode_plus
     }
+
+    Note
+    ----
+    What's described above is what SHOULD be returned but actually this function returns
+    dict(**kwargs, <all the Tensors described above>)
     """
     # get [CLS] and [SEP] tokens
     cls_token_id, sep_token_id = LongTensor([tokenizer.cls_token_id]), LongTensor([tokenizer.sep_token_id])
@@ -1199,10 +1205,8 @@ def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, 
     flat_text = cat((flat_text, padding))
 
     # return updated window
-    return dict(uri=uri, speaker_turn_window=speaker_turn_window, aliases=aliases,
-                text_window=text_window, target_window=target_window,
-                text_id_window=flat_text, target_id_window=relative_targets,
-                speaker_id_window=speaker_id_window, audio_window=aligned_audio, audio_mask_window=aligned_audio_mask,
+    return dict(**kwargs, text_id_window=flat_text, target_id_window=relative_targets,
+                audio_window=aligned_audio, audio_mask_window=aligned_audio_mask,
                 src_key_padding_mask=src_key_padding_mask, tgt_key_padding_mask=tgt_key_padding_mask)
 
 
