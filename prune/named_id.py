@@ -369,9 +369,9 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                 # unpack tensors from batch
                 text_id_window, target_id_window, audio_window, audio_mask_window, src_key_padding_mask, tgt_key_padding_mask = \
                     get_tensors(**batch)
-                # unpack text from batch
-                # TODO get timings
-                uri, speaker_turns, aliases, text_window, target_window, speaker_id_window = get_text(**batch)
+                # unpack lists from batch (text, aliases and timings)
+                uri, speaker_turns, aliases, text_window, target_window, speaker_id_window, timing_window = \
+                    get_lists(**batch)
 
                 # forward pass: (batch_size, sequence_length, sequence_length)
                 output = model(text_id_window, audio_window, src_key_padding_mask, audio_mask_window)
@@ -460,21 +460,21 @@ def eval(batches_parameters, model, tokenizer, log_dir,
 
                     # reset file-level variables
                     shift = 0
-                    file_target, file_speaker_id, file_predictions, file_confidence = [], [], []
+                    file_target, file_speaker_id, file_predictions = [], [], []
+                    file_confidence, file_timing = [], []
 
                 i = 0
                 # save target and output for future file-level accuracy
-                for target_i, pred_i, speaker_id_i, speaker_turn_i, conf_i in zip_longest(
-                                                                                  target_window,
-                                                                                  predictions,
-                                                                                  speaker_id_window,
-                                                                                  speaker_turns,
-                                                                                  aligned_confidence):
+                zipper = zip_longest(target_window, predictions, speaker_id_window,
+                                     speaker_turns, aligned_confidence, timing_window)
+                for target_i, pred_i, speaker_id_i, speaker_turn_i, conf_i, timing_i in zipper:
                     pred_i = pred_i.split()
                     target_i = list(target_i)
                     for start, end in speaker_turn_i:
                         if len(file_target) < end:
                             file_target += target_i[start-shift: end-shift]
+                        if len(file_timing) < end:
+                            file_timing += timing_i[start-shift: end-shift]
                         if speaker_id_i is not None:
                             if len(file_speaker_id) < end:
                                 file_speaker_id += speaker_id_i[start-shift: end-shift]
@@ -509,7 +509,7 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                     breakpoint()
 
                 previous_uri = uri
-                previous_timings = timings
+                previous_timings = file_timing
 
             # compute file-level accuracy for the last file
             uris.append(previous_uri)
@@ -538,7 +538,7 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                                                              split=False))
             # convert hypothesis to pyannote Annotation
             if test:
-                hypothesis = id_to_annotation(file_predictions, timings, uri)
+                hypothesis = id_to_annotation(file_predictions, file_timing, uri)
                 # save hypothesis to rttm
                 with open(rttm_out, 'a') as file:
                     hypothesis.write_rttm(file)
@@ -619,9 +619,9 @@ def get_tensors(text_id_window=None, target_id_window=None, audio_window=None, a
     return text_id_window, target_id_window, audio_window, audio_mask_window, src_key_padding_mask, tgt_key_padding_mask
 
 
-def get_text(uri=None, speaker_turn_window=None, aliases=None,
-             text_window=None, target_window=None, speaker_id_window=None, **kwargs):
-    return uri, speaker_turn_window, aliases, text_window, target_window, speaker_id_window
+def get_lists(uri=None, speaker_turn_window=None, aliases=None, text_window=None,
+             target_window=None, speaker_id_window=None, timing_window=None, **kwargs):
+    return uri, speaker_turn_window, aliases, text_window, target_window, speaker_id_window, timing_window
 
 
 def train(batches_parameters, model, tokenizer, train_dir=Path.cwd(),
@@ -779,10 +779,11 @@ def format_transcription(current_file, tokenizer, mapping, audio_emb=None, windo
         speaker_id_window, List[str]
             list of speaker identifiers
         audio_window, Tensor
-            Tensor of variable length of audio embeddings
+            Tensor of of audio embeddings
         audio_mask_window, Tensor
-            Same length as audio_window.
             When to mask audio_window (see torch.nn.Transformer)
+        timing_window, List[Segment]
+            List of words timestamps
     }
 
     Note
@@ -909,7 +910,8 @@ def format_transcription(current_file, tokenizer, mapping, audio_emb=None, windo
             "target_id_window": target_ids[start: end],
             "speaker_id_window": speaker_ids[start: end],
             "audio_window": audio[start: end] if audio is not None else None,
-            "audio_mask_window": audio_masks[start: end] if audio is not None else None
+            "audio_mask_window": audio_masks[start: end] if audio is not None else None,
+            "timing_window": timings[start: end]
         }
         yield window
 
