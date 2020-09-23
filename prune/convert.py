@@ -20,6 +20,28 @@ DISTANCE_THRESHOLD = 0.5
 NA_VALUES = {'', '<NA>'}
 
 
+def id_to_annotation(id_hypothesis, timings, uri=None, modality='speaker'):
+    """Converts identification hypothesis from named_id to pyannote Annotation
+
+    Parameters
+    ----------
+    id_hypothesis: List[str]
+        List of speaker names
+    timings: List[Segment]
+        List of timings, aligned with id_hypothesis
+    uri, modality: str, optional
+        See Annotation
+
+    Returns
+    -------
+    annotation: Annotation
+    """
+    annotation = Annotation(uri=uri, modality=modality)
+    for speaker, timing in zip(id_hypothesis, timings):
+        annotation[timing, speaker] = speaker
+    return annotation
+
+
 def update_labels(annotation, distances):
     """Tag labels with "?" depending on their distance to the reference
     """

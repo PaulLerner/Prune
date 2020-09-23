@@ -95,7 +95,7 @@ from torch.optim import Adam
 from torch.nn import BCELoss, DataParallel
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
-
+from prune.convert import id_to_annotation
 
 # ignore torch DeprecationWarning which has been removed in later versions
 warnings.filterwarnings("ignore", message="pickle support for Storage will be removed in 1.5", module="torch")
@@ -336,6 +336,10 @@ def eval(batches_parameters, model, tokenizer, log_dir,
             epoch = yaml.load(file, Loader=yaml.SafeLoader)["epoch"]
         weights = [weights_path/EPOCH_FORMAT.format(epoch)]
         best = 0.
+        rttm_out = log_dir/'hypothesis.rttm'
+        if rttm_out.exists():
+            raise FileExistsError(f"'{rttm_out}' already exists, you probably don't want "
+                                  f"to append any more data to it")
     else:
         weights_path = log_dir.parents[0] / 'weights'
         weights = sorted(weights_path.iterdir(), reverse=evergreen)
@@ -366,6 +370,7 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                 text_id_window, target_id_window, audio_window, audio_mask_window, src_key_padding_mask, tgt_key_padding_mask = \
                     get_tensors(**batch)
                 # unpack text from batch
+                # TODO get timings
                 uri, speaker_turns, aliases, text_window, target_window, speaker_id_window = get_text(**batch)
 
                 # forward pass: (batch_size, sequence_length, sequence_length)
@@ -416,7 +421,7 @@ def eval(batches_parameters, model, tokenizer, log_dir,
 
                 # handle file-level stuff
                 if uri != previous_uri:
-                    # compute file-level accuracy
+                    # compute file-level accuracy and save output if testing
                     if previous_uri is not None:
                         uris.append(previous_uri)
                         # merge window-level predictions
@@ -439,11 +444,19 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                         # compute speaker alias accuracy
                         if aliases:
                             file_alias_accs.append(speaker_alias_accuracy([file_speaker_id],
-                                                                          [file_predictions],
-                                                                          aliases,
-                                                                          pad=tokenizer.pad_token,
-                                                                          split=False))
-                        # TODO audio ER
+                                                                         [file_predictions],
+                                                                         aliases,
+                                                                         pad=tokenizer.pad_token,
+                                                                         split=False))
+                        # convert hypothesis to pyannote Annotation
+                        if test:
+                            hypothesis = id_to_annotation(file_predictions,
+                                                          previous_timings,
+                                                          previous_uri)
+
+                            # save hypothesis to rttm
+                            with open(rttm_out, 'a') as file:
+                                hypothesis.write_rttm(file)
 
                     # reset file-level variables
                     shift = 0
@@ -496,6 +509,7 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                     breakpoint()
 
                 previous_uri = uri
+                previous_timings = timings
 
             # compute file-level accuracy for the last file
             uris.append(previous_uri)
@@ -518,10 +532,17 @@ def eval(batches_parameters, model, tokenizer, log_dir,
             # compute speaker alias accuracy
             if aliases:
                 file_alias_accs.append(speaker_alias_accuracy([file_speaker_id],
-                                                              [file_predictions],
-                                                              aliases,
-                                                              pad=tokenizer.pad_token,
-                                                              split=False))
+                                                             [file_predictions],
+                                                             aliases,
+                                                             pad=tokenizer.pad_token,
+                                                             split=False))
+            # convert hypothesis to pyannote Annotation
+            if test:
+                hypothesis = id_to_annotation(file_predictions, timings, uri)
+                # save hypothesis to rttm
+                with open(rttm_out, 'a') as file:
+                    hypothesis.write_rttm(file)
+
             # average file-accuracies
             uris.append('TOTAL')
             file_word_accs.append(np.mean(file_word_accs))
@@ -779,12 +800,12 @@ def format_transcription(current_file, tokenizer, mapping, audio_emb=None, windo
     if audio_emb is not None:
         current_audio_emb = audio_emb(current_file)
 
-    # format transcription into 5 lists: tokens, audio, audio_masks, targets, speaker_ids
+    # format transcription into 6 lists: tokens, audio, audio_masks, targets, speaker_ids, timings
     # and segment it in speaker turns (i.e. speaker homogeneous)
     speaker_turns = []
     aliases = {}
     start, end = 0, 0
-    tokens, audio, audio_masks, targets, speaker_ids = [], [], [], [], []
+    tokens, audio, audio_masks, targets, speaker_ids, timings = [], [], [], [], [], []
     token_ids, target_ids = [], []
     previous_speaker = None
     for word in transcription:
@@ -793,18 +814,20 @@ def format_transcription(current_file, tokenizer, mapping, audio_emb=None, windo
             speaker_turns.append((start, end))
             start = end
         previous_speaker = word._.speaker
-        # get audio embedding for word if alignment timing is confident enough
-        if audio_emb is not None and word._.confidence > 0.5:
-            segment = Segment(word._.time_start, word._.time_end)
-            segment = current_audio_emb.crop(segment, mode="loose")
-            # skip segments so small we don't have any embedding for it
-            if len(segment) < 1:
-                segment = None
-            # average audio-embedding over the segment frames
-            else:
-                segment = np.mean(segment, axis=0)
+        # get audio embedding and timing for word if forced-alignment is confident enough
+        segment = None
+        if word._.confidence > 0.5:
+            timing = Segment(word._.time_start, word._.time_end)
+            if audio_emb is not None:
+                segment = current_audio_emb.crop(timing, mode="loose")
+                # skip segments so small we don't have any embedding for it
+                if len(segment) < 1:
+                    segment = None
+                # average audio-embedding over the segment frames
+                else:
+                    segment = np.mean(segment, axis=0)
         else:
-            segment = None
+            timing = Segment()
         # if we don't have a proper target we should mask the loss function
         target = mapping.get(word._.speaker, tokenizer.pad_token)
 
@@ -817,6 +840,7 @@ def format_transcription(current_file, tokenizer, mapping, audio_emb=None, windo
             token_ids.append(encode(token, tokenizer))
             target_ids.append(encode(target, tokenizer))
             speaker_ids.append(word._.speaker)
+            timings.append(timing)
             if audio_emb is not None:
                 if segment is None:
                     audio.append(zeros(1, audio_emb.dimension, dtype=float))
