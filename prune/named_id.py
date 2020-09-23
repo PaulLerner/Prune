@@ -1277,19 +1277,23 @@ def reshape_window(tokenizer, uri=None, speaker_turn_window=None, aliases=None, 
 
     # compute relative targets
     relative_targets = zeros(max_length, max_length+1)
-    tgt_key_padding_mask = zeros(max_length, max_length+1, dtype=int)
+    # init padding mask w.r.t. max_length-target_id_window.shape
+    tgt_key_padding_mask = ones(max_length, max_length+1, dtype=int)
+    tgt_key_padding_mask[:, target_id_window.shape[0]:] = 0
     for j, t in enumerate(target_id_window):
         if t == tokenizer.pad_token_id:
+            # update padding mask accordingly
+            tgt_key_padding_mask[:, j] = 0
             continue
         where = flat_text == t
         # speaker name is not mentioned in input -> target unknown speaker (last item)
+        # and make sure it's not padded
         if not where.any():
             where = -1
+            tgt_key_padding_mask[j, where] = 1
         # else target mentions index
         else:
             where = where.nonzero().reshape(-1)
-        # un-mask target
-        tgt_key_padding_mask[j, where] = 1
         relative_targets[j, where] = 1.
 
     # pad input to max length and compute mask accordingly
