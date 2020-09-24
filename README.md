@@ -47,13 +47,18 @@ File structure and usage is very similar to `pyannote.audio`:
   formatted in windows of `window` speaker turns with a given `step`.
   Speaker turns are themselves padded to `max_len`.
   `--easy` should be used for training or visualization purposes: it keeps only windows with at least one named speaker in the input.
-  Idem for `--sep_change` which adds a special "[SEP]" token between every speaker turn.
 - `train` will train the model for `epochs` epochs, starting from `--from=<epoch>` (defaults to 0), dropping checkpoints every `save_every`.
-  You can also customize learning rate, gradient clipping and freeze modules.
+  You can also customize learning rate, gradient clipping and freeze modules. 
+  **Note about augmentation**: augmentation is now done on-the-fly, which means that two speaker turn windows 
+  will have different augmentations over different epochs. 
+  Thus it doesn't make much sense to have an augmentation ratio *smaller* than `-1` (`ratio < 0` &rarr; discard original sample).
+  See also `offline_augmentation` branch where all data loading and augmentation was done before training &rarr; heavy on the RAM.
+  
 - `validate` will evaluate each checkpoint of the trained model and store the best metric in `params.yml`. 
   You can pick the validation order with `--evergreen` and visualize examples with `--interactive`
 - `test` will evaluate only the best model according to the previous validation step, print and write the metrics in `eval`
 - `oracle` will run and evaluate an oracle that knows who the speaker is if it's name (case-insensitive) is mentioned in the input.
+  :warning: This is broken right now, please use oracle from the `offline_augmentation` branch.
   The dedicated script `oracle.py` works the same but at the file-level (no speaker turn windows)
 - `visualize` will apply a t-SNE over speaker name embeddings, either from raw BERT or fine-tuned model
  
