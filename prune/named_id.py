@@ -1046,14 +1046,26 @@ def handle_augmentation(tokenizer, protocol, mapping, subset='train', audio_emb=
             with open(save_synthetic_names, 'wb') as file:
                 pickle.dump(names, file)
 
+    tmp_storage = []
     for window in save_load_windows(save_windows, shuffle, protocol, subset, tokenizer,
                                     mapping, audio_emb, window_size, step_size, easy, oracle):
         # augment < 0 ==> discard original sample
         if not augment < 0:
-            yield window
-        # FIXME: original and augmented windows will be next to each other
+            tmp_storage.append(window)
         for other_window in augment_window(**window, augment=augment, names=names):
-            yield other_window
+            tmp_storage.append(other_window)
+        # store windows in a temporary list to be able to shuffle synthetic and original windows before yielding (if shuffle)
+        if len(tmp_storage) >= 10*batch_size*abs(augment):
+            if shuffle:
+                np.random.shuffle(tmp_storage)
+            for stored_window in tmp_storage:
+                yield stored_window
+            tmp_storage = []
+    # yield any remainder
+    if shuffle:
+        np.random.shuffle(tmp_storage)
+    for stored_window in tmp_storage:
+        yield stored_window
 
 
 def batchify(tokenizer, protocol, mapping, subset='train', audio_emb=None, batch_size=128,
