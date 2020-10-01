@@ -566,7 +566,7 @@ def eval(batches_parameters, model, tokenizer, log_dir,
 
             # dump best metrics
             elif epoch_word_acc > best:
-                best = float(epoch_word_acc)
+                best = epoch_word_acc.item()
                 with open(log_dir / 'params.yml', 'w') as file:
                     yaml.dump({"accuracy": best, "epoch": epoch}, file)
 
