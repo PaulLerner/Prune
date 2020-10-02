@@ -95,7 +95,7 @@ from torch.optim import Adam
 from torch.nn import BCELoss, DataParallel
 from transformers import BertTokenizer
 from prune.sidnet import SidNet
-from prune.convert import id_to_annotation
+from prune.convert import write_id
 
 # ignore torch DeprecationWarning which has been removed in later versions
 warnings.filterwarnings("ignore", message="pickle support for Storage will be removed in 1.5", module="torch")
@@ -450,13 +450,9 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                                                                          split=False))
                         # convert hypothesis to pyannote Annotation
                         if test:
-                            hypothesis = id_to_annotation(file_predictions,
-                                                          previous_timings,
-                                                          previous_uri)
-
                             # save hypothesis to rttm
                             with open(rttm_out, 'a') as file:
-                                hypothesis.write_rttm(file)
+                                write_id(file, file_predictions, previous_timings, file_confidence, previous_uri)
 
                     # reset file-level variables
                     shift = 0
@@ -537,10 +533,9 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                                                              split=False))
             # convert hypothesis to pyannote Annotation
             if test:
-                hypothesis = id_to_annotation(file_predictions, file_timing, uri)
                 # save hypothesis to rttm
                 with open(rttm_out, 'a') as file:
-                    hypothesis.write_rttm(file)
+                    write_id(file, file_predictions, file_timing, file_confidence, uri)
 
             # average file-accuracies
             uris.append('TOTAL')
