@@ -404,8 +404,8 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                 # handle fully-padded batches
                 if batch_word_acc is not None:
                     epoch_word_acc.append(batch_word_acc)
-                    correct_confs.append(correct_conf)
-                    wrong_confs.append(wrong_conf)
+                    correct_confs += correct_conf
+                    wrong_confs += wrong_conf
 
                 # compute alias accuracy
                 if aliases:
