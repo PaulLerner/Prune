@@ -174,7 +174,7 @@ def batch_word_accuracy(targets: List[np.ndarray], predictions: List[str],
                 wrong_conf.append(c)
             total += 1
     if total == 0:
-        return None
+        return None, None, None
     return correct/total, correct_conf, wrong_conf
 
 
