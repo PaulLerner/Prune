@@ -15,6 +15,8 @@ from docopt import docopt
 from pathlib import Path
 import affinegap
 from scipy.optimize import linear_sum_assignment
+from typing import Text
+
 
 DISTANCE_THRESHOLD = 0.5
 NA_VALUES = {'', '<NA>'}
@@ -40,6 +42,41 @@ def id_to_annotation(id_hypothesis, timings, uri=None, modality='speaker'):
     for speaker, timing in zip(id_hypothesis, timings):
         annotation[timing, speaker] = speaker
     return annotation
+
+
+def write_id(file, id_hypothesis, timings, confidences, uri):
+    """Writes identification hypothesis to RTTM-like file
+
+    Parameters
+    ----------
+    file: file object
+    id_hypothesis: List[str]
+        List of speaker names
+    timings: List[Segment]
+        List of timings, aligned with id_hypothesis
+    confidences: List[float]
+        List of confidence, aligned with id_hypothesis
+    uri: str
+        File identifier
+
+    See Also
+    --------
+    pyannote.core.Annotation.write_rttm
+    """
+    if isinstance(uri, Text) and ' ' in uri:
+        msg = (f'Space-separated RTTM file format does not allow file URIs '
+               f'containing spaces (got: "{uri}").')
+        raise ValueError(msg)
+    for label, segment, confidence in zip(id_hypothesis, timings, confidences):
+        if isinstance(label, Text) and ' ' in label:
+            msg = (f'Space-separated RTTM file format does not allow labels '
+                   f'containing spaces (got: "{label}").')
+            raise ValueError(msg)
+        line = (
+            f'SPEAKER {uri} 1 {segment.start:.3f} {segment.duration:.3f} '
+            f'<NA> <NA> {label} <NA> {confidence:.3f}\n'
+        )
+        file.write(line)
 
 
 def update_labels(annotation, distances):
