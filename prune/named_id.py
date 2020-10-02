@@ -549,7 +549,7 @@ def eval(batches_parameters, model, tokenizer, log_dir,
                 file_alias_accs.append(np.mean(file_alias_accs))
 
             # log tensorboard
-            tb.add_scalar('Accuracy/eval/file/word', file_word_acc[-1], epoch)
+            tb.add_scalar('Accuracy/eval/file/word', file_word_accs[-1], epoch)
             epoch_loss = np.mean(epoch_loss)
             tb.add_scalar('Loss/eval', epoch_loss, epoch)
             epoch_word_acc = np.mean(epoch_word_acc)
